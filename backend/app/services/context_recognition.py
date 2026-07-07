@@ -171,9 +171,16 @@ def is_technical_document(segments: list[SpeechSegment]) -> bool:
 
         from app.services import domain_classifier
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        # NOT a `with` block: the context manager's exit waits for the worker
+        # to finish, which would silently turn this timeout into an infinite
+        # wait when the classifier truly hangs. shutdown(wait=False) lets the
+        # pipeline move on immediately; the stuck thread is abandoned.
+        pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        try:
             future = pool.submit(domain_classifier.technical_score, transcript)
             score = future.result(timeout=60)
+        finally:
+            pool.shutdown(wait=False, cancel_futures=True)
         verdict = score > 0.02
         logger.info(
             "Domain classifier (semantic): %s (score %+.3f)",
