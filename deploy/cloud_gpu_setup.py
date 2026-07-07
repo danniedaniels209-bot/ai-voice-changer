@@ -49,15 +49,25 @@ def main() -> None:
     platform = detect_platform()
     print(f"=== AI Voice Changer cloud bootstrap ({platform}) ===")
 
-    # 1. Verify GPU
+    # 1. Verify GPU — refuse to continue without one: a CPU cloud session is
+    # as slow as the laptop it was meant to replace.
     try:
         import torch
 
-        print(f"torch {torch.__version__}, CUDA: {torch.cuda.is_available()}"
-              + (f" ({torch.cuda.get_device_name(0)})" if torch.cuda.is_available() else ""))
+        has_gpu = torch.cuda.is_available()
+        print(f"torch {torch.__version__}, CUDA: {has_gpu}"
+              + (f" ({torch.cuda.get_device_name(0)})" if has_gpu else ""))
     except ImportError:
-        print("WARNING: torch missing — the pip step will install a CPU build; "
-              "prefer a GPU notebook image.")
+        has_gpu = False
+
+    if not has_gpu:
+        print("\n" + "!" * 62)
+        print("  NO GPU IN THIS SESSION — stopping before wasting your time.")
+        print("  Fix (Colab):  Runtime -> Change runtime type -> T4 GPU -> Save")
+        print("  Fix (Kaggle): Settings panel -> Accelerator -> GPU T4 x2")
+        print("  The session restarts when you change it — then re-run this cell.")
+        print("!" * 62)
+        raise SystemExit(1)
 
     # 2. Dependencies — WITHOUT touching the platform's CUDA torch.
     run([sys.executable, "-m", "pip", "install", "-q", "--no-deps", "rvc-python", "chatterbox-tts"])
