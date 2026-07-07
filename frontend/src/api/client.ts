@@ -97,11 +97,58 @@ export async function apiDelete<T>(path: string): Promise<T> {
   return handleResponse<T>(response);
 }
 
-export async function apiUpload<T>(path: string, formData: FormData): Promise<T> {
-  const response = await fetch(`${API_BASE_URL}${path}`, {
-    method: "POST",
-    headers: authHeaders(),
-    body: formData,
+/** True when traffic flows through a Cloudflare quick tunnel, which caps
+ * request bodies at ~100 MB — large uploads must be warned about upfront. */
+export const TUNNEL_ACTIVE =
+  window.location.host.endsWith(".trycloudflare.com") ||
+  (REMOTE_BACKEND_ACTIVE && (remoteUrl ?? "").includes(".trycloudflare.com"));
+
+export function apiUpload<T>(
+  path: string,
+  formData: FormData,
+  onProgress?: (percent: number) => void,
+): Promise<T> {
+  // XMLHttpRequest instead of fetch: it's the only way to observe upload
+  // progress, and large videos over a slow uplink NEED visible progress.
+  return new Promise<T>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `${API_BASE_URL}${path}`);
+    for (const [k, v] of Object.entries(authHeaders())) xhr.setRequestHeader(k, v);
+
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable && onProgress) onProgress((e.loaded / e.total) * 100);
+    };
+    xhr.onload = () => {
+      try {
+        const body = JSON.parse(xhr.responseText);
+        if (xhr.status >= 200 && xhr.status < 300) resolve(body as T);
+        else reject(new ApiError(xhr.status, body));
+      } catch {
+        reject(
+          new ApiError(xhr.status, {
+            error: {
+              code: "unknown_error",
+              message:
+                xhr.status === 413
+                  ? "The upload was rejected as too large (tunnel connections cap uploads at ~100 MB)."
+                  : xhr.statusText || "Upload failed",
+              details: {},
+            },
+          }),
+        );
+      }
+    };
+    xhr.onerror = () =>
+      reject(
+        new ApiError(0, {
+          error: {
+            code: "network_error",
+            message:
+              "Upload failed — connection lost or rejected. Tunnel connections cap uploads at ~100 MB.",
+            details: {},
+          },
+        }),
+      );
+    xhr.send(formData);
   });
-  return handleResponse<T>(response);
 }

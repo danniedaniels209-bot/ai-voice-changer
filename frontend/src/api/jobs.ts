@@ -1,10 +1,10 @@
 import { apiGet, apiPost, apiUpload } from "./client";
 import type { ConvertRequest, Job } from "../types/api";
 
-export function uploadVideo(video: File): Promise<Job> {
+export function uploadVideo(video: File, onProgress?: (percent: number) => void): Promise<Job> {
   const formData = new FormData();
   formData.append("video", video);
-  return apiUpload<Job>("/upload", formData);
+  return apiUpload<Job>("/upload", formData, onProgress);
 }
 
 export function getJob(jobId: string): Promise<Job> {

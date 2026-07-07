@@ -6,7 +6,7 @@ import { listModels } from "../api/models";
 import { listVoices, listCustomVoices } from "../api/voices";
 import { getSettings } from "../api/settings";
 import { uploadVideo, startConversion } from "../api/jobs";
-import { ApiError, API_BASE_URL } from "../api/client";
+import { ApiError, API_BASE_URL, TUNNEL_ACTIVE } from "../api/client";
 import {
   DEFAULT_CONTINUITY,
   DEFAULT_VOICE_PARAMS,
@@ -170,13 +170,27 @@ export function Home() {
 
   async function handleStart() {
     if (!canStart) return;
+    if (TUNNEL_ACTIVE) {
+      const tooBig = files.find((f) => f.size > 95 * 1024 * 1024);
+      if (tooBig) {
+        setError(
+          `"${tooBig.name}" is ${(tooBig.size / (1024 * 1024)).toFixed(0)} MB — cloud tunnel ` +
+            "connections cap uploads at ~100 MB. Trim or compress the video below 95 MB, " +
+            "or convert this one locally.",
+        );
+        return;
+      }
+    }
     setIsSubmitting(true);
     setError(null);
     const jobIds: string[] = [];
     try {
       for (const [i, file] of files.entries()) {
-        setSubmitProgress(files.length > 1 ? `Uploading ${i + 1} of ${files.length}: ${file.name}` : null);
-        const job = await uploadVideo(file);
+        const label = files.length > 1 ? `Uploading ${i + 1} of ${files.length}: ${file.name}` : `Uploading ${file.name}`;
+        setSubmitProgress(`${label}...`);
+        const job = await uploadVideo(file, (pct) =>
+          setSubmitProgress(`${label} — ${pct.toFixed(0)}%`),
+        );
         await startConversion(job.id, {
           mode,
           model_name: mode === "rvc" ? selectedModel : null,
