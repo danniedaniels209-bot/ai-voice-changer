@@ -166,8 +166,11 @@ def test_common_words_are_not_flagged_as_rare():
 
 
 def test_semantic_classifier_integration():
-    """Real MiniLM classification - runs only if the model is already cached."""
+    """Real MiniLM classification — opt-in: slow on CPU-only machines."""
     import os
+
+    if os.environ.get("AVC_RUN_SLOW_TESTS") != "1":
+        pytest.skip("set AVC_RUN_SLOW_TESTS=1 to run the real-model test")
 
     os.environ.setdefault("HF_HUB_OFFLINE", "1")
     try:

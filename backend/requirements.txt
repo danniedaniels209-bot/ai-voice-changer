@@ -57,3 +57,6 @@ pytest==8.3.4
 # edge-tts: Microsoft Edge neural voices (free; requires internet at runtime).
 faster-whisper==1.2.1
 edge-tts==7.2.8
+
+# --- Narration Studio ---
+python-docx==1.1.2

@@ -73,7 +73,8 @@ def main() -> None:
     run([sys.executable, "-m", "pip", "install", "-q", "--no-deps", "rvc-python", "chatterbox-tts"])
     run([sys.executable, "-m", "pip", "install", "-q", "-r", str(BACKEND / "requirements-cloud.txt")])
     run([sys.executable, "-m", "pip", "install", "-q",
-         "resemble-perth", "s3tokenizer", "conformer", "diffusers", "wordfreq"])
+         "resemble-perth", "s3tokenizer", "conformer", "diffusers", "wordfreq",
+         "accelerate", "python-docx"])
 
     # 3. Tunnel client (cloudflared — no account needed)
     tunnel_bin = Path("/tmp/cloudflared")
@@ -91,6 +92,7 @@ def main() -> None:
     env["AVC_AUTH_TOKEN"] = token
     env["AVC_HOST"] = "127.0.0.1"
     env["HF_HUB_DISABLE_XET"] = "1"
+    env["AVC_ENABLE_LLM"] = "1"  # Script Studio (Qwen2.5-3B) runs on the session GPU
 
     # 5. Start the backend
     server = subprocess.Popen(
