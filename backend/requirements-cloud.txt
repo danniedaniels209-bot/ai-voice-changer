@@ -1,0 +1,61 @@
+# Cloud GPU deployment (Colab/Kaggle): same as requirements.txt but WITHOUT
+# torch/torchaudio pins - the platform ships CUDA builds that must be kept.
+# --- Web server ---
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+python-multipart==0.0.20
+websockets==14.1
+
+# --- Config / validation ---
+pydantic==2.10.4
+pydantic-settings==2.7.0
+
+# --- Audio / video processing ---
+# FFmpeg itself is invoked as a subprocess (see app/services/ffmpeg_service.py),
+# not through a Python wrapper library.
+librosa==0.10.2.post1
+soundfile==0.14.0
+numpy==2.4.6
+
+# --- Speech/background separation ---
+demucs==4.0.1
+
+# --- Voice conversion (RVC) ---
+# `pip install -r requirements.txt` installs the CPU-only build by default.
+# For an NVIDIA GPU, install torch/torchaudio SEPARATELY first with the CUDA
+# index matching your driver, e.g.:
+#   pip install torch==2.5.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cu121
+# then run this file — pip will see the pins already satisfied and skip them.
+# torch==2.5.1  # cloud: keep the platform CUDA build / not needed
+# torchaudio==2.5.1  # cloud: keep the platform CUDA build / not needed
+torchcrepe==0.0.23
+faiss-cpu==1.9.0.post1
+praat-parselmouth==0.4.5
+pyworld==0.3.5
+requests==2.32.3
+
+# Fairseq-free content encoder (replaces rvc-python's fairseq-based HuBERT
+# loader). See app/rvc_lib/patch.py.
+transformers==4.47.1
+
+# rvc-python provides the actual RVC-Project synthesizer network + inference
+# pipeline code. It must be installed SEPARATELY with --no-deps, because its
+# own pinned dependencies (fairseq==0.12.2, numpy<=1.23.5, faiss-cpu==1.7.3)
+# conflict with the versions above and fairseq does not reliably build on
+# Windows + Python 3.11. After `pip install -r requirements.txt`, run:
+#   pip install --no-deps rvc-python==0.1.5
+# See app/rvc_lib/patch.py for how its fairseq-based HuBERT loader is
+# replaced at runtime with the transformers-based encoder above.
+
+# --- Future ONNX Runtime support ---
+# onnxruntime==1.20.1  # cloud: keep the platform CUDA build / not needed
+# onnxruntime-gpu==1.20.1  # swap in manually if using CUDA + ONNX models
+
+# --- Dev / testing ---
+pytest==8.3.4
+
+# --- TTS pipeline mode ("AI narrator" voices) ---
+# faster-whisper: local speech-to-text with segment timestamps.
+# edge-tts: Microsoft Edge neural voices (free; requires internet at runtime).
+faster-whisper==1.2.1
+edge-tts==7.2.8

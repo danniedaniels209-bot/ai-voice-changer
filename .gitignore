@@ -1,0 +1,24 @@
+# Python
+backend/.venv/
+__pycache__/
+*.pyc
+
+# Node
+frontend/node_modules/
+
+# Runtime data — never in the repo
+temp/
+exports/
+logs/
+models/
+backend/app_settings.json
+backend/.env
+
+# The vendored openvoice package IS committed; its cache isn't
+backend/openvoice/__pycache__/
+
+# ffmpeg binaries (download separately)
+ffmpeg/*.exe
+
+# Frontend build IS committed (deploy/DEPLOY.md relies on it)
+# frontend/dist/  <- intentionally NOT ignored
