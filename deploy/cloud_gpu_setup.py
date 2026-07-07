@@ -93,6 +93,9 @@ def main() -> None:
     env["AVC_HOST"] = "127.0.0.1"
     env["HF_HUB_DISABLE_XET"] = "1"
     env["AVC_ENABLE_LLM"] = "1"  # Script Studio (Qwen2.5-3B) runs on the session GPU
+    # GPU-grade model upgrades (local PC defaults stay untouched):
+    env.setdefault("AVC_WHISPER_MODEL", "large-v3")   # best transcription accuracy
+    env.setdefault("AVC_DEMUCS_MODEL", "htdemucs_ft") # cleaner voice/music separation
 
     # 5. Start the backend
     server = subprocess.Popen(

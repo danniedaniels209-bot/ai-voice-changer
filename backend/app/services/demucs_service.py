@@ -24,7 +24,11 @@ logger = get_logger(__name__)
 # htdemucs is Demucs' current best general-purpose model. --two-stems vocals
 # makes it output exactly what this pipeline needs: an isolated vocal track
 # and a "no_vocals" track (drums+bass+other summed) as the background bed.
-DEMUCS_MODEL = "htdemucs"
+import os
+
+# htdemucs = default (fast, good). Cloud sessions set AVC_DEMUCS_MODEL to
+# htdemucs_ft (fine-tuned: cleaner separation, ~4x slower - trivial on GPU).
+DEMUCS_MODEL = os.environ.get("AVC_DEMUCS_MODEL", "htdemucs")
 
 # Demucs prints tqdm-style progress bars ("... 42%|####...") while separating.
 _PROGRESS_RE = re.compile(r"(\d{1,3})%\|")

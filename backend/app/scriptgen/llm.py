@@ -18,7 +18,9 @@ from app.core.logging import get_logger
 
 logger = get_logger(__name__)
 
-MODEL_ID = "Qwen/Qwen2.5-3B-Instruct"
+# Default fits a free T4 alongside the other models; override with
+# AVC_LLM_MODEL (e.g. Qwen/Qwen2.5-7B-Instruct on a bigger GPU).
+MODEL_ID = os.environ.get("AVC_LLM_MODEL", "Qwen/Qwen2.5-3B-Instruct")
 
 _lock = threading.Lock()
 _bundle = None  # (tokenizer, model)
