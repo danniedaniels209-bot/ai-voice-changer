@@ -79,12 +79,15 @@ def is_known_voice(voice_id: str) -> bool:
     return any(v.id == voice_id for v in CURATED_VOICES)
 
 
-def _synthesize_one(text: str, voice: str, mp3_path: Path) -> None:
-    """Synthesize one segment to mp3. Runs edge-tts' async API to completion."""
+def _synthesize_one(text: str, voice: str, mp3_path: Path, rate_pct: int = 0) -> None:
+    """Synthesize one segment to mp3. Runs edge-tts' async API to completion.
+    `rate_pct` speaks natively faster/slower — natural-sounding, unlike
+    post-hoc time-stretching."""
     import edge_tts
 
     async def _run() -> None:
-        communicate = edge_tts.Communicate(text, voice)
+        rate = f"{'+' if rate_pct >= 0 else ''}{rate_pct}%"
+        communicate = edge_tts.Communicate(text, voice, rate=rate)
         await communicate.save(str(mp3_path))
 
     try:
@@ -135,6 +138,19 @@ def _mp3_to_wav(mp3_path: Path, wav_path: Path, tempo: float = 1.0) -> None:
     if result.returncode != 0:
         tail = "\n".join(result.stderr.strip().splitlines()[-10:])
         raise SynthesisError(f"Could not decode synthesized audio: {tail}")
+
+
+def _allowed_end_seconds(seg_end: float, next_start: float | None) -> float:
+    """
+    How far a segment's audio may extend: past its ORIGINAL end into at most
+    half of its own trailing pause (capped at 1.2s), and never past the next
+    segment's start. Slightly shortening a pause is inaudible; time-stretching
+    speech is not - so pauses absorb overruns before tempo does.
+    """
+    if next_start is None:
+        return seg_end + 1.2
+    gap = max(0.0, next_start - seg_end)
+    return min(next_start, seg_end + min(gap * 0.5, 1.2))
 
 
 def _validate_reconstruction(
@@ -195,7 +211,8 @@ def _validate_reconstruction(
             problems.append(f"OUT OF ORDER: {_describe(entry)}")
         prev_start = start_idx
 
-        max_end = int(m_end * TIMELINE_SR) + fade_samples + 4  # rounding epsilon
+        next_start = master[master.index(entry) + 1][1] if master.index(entry) + 1 < len(master) else None
+        max_end = int(_allowed_end_seconds(m_end, next_start) * TIMELINE_SR) + fade_samples + 4
         if start_idx + len(audio) > max_end:
             problems.append(
                 f"OVERRUN: {_describe(entry)} extends "
@@ -256,6 +273,9 @@ def synthesize_timeline(
         def _synthesize_raw(text: str, raw_path: Path) -> None:
             _synthesize_one(text, voice, raw_path)
 
+    def _synthesize_raw_refit(seg, raw_path: Path, rate_boost: int) -> None:
+        _synthesize_one(seg.text, voice, raw_path, rate_pct=rate_boost)
+
     # Continuity assembly helpers: crossfaded placement + rolling energy
     # memory so consecutive chunks sound like one performance.
     fade_samples = 0
@@ -295,23 +315,38 @@ def synthesize_timeline(
         if audio.ndim > 1:
             audio = audio.mean(axis=1)
 
-        # Master-timeline fit: the segment's ORIGINAL duration is the target.
-        # The audio must land inside [start, end] exactly as the source did -
-        # shorter audio leaves natural silence (the timeline buffer is
-        # zero-padded); longer audio is time-stretched to fit. Because the
-        # atempo chain is unbounded, words are never dropped to make room;
-        # a truncating trim only remains as a last-resort guard against a
-        # pathological stretch (>4x), which validation would surface anyway.
-        target_seconds = max(seg.end - seg.start, 0.2)
+        # Master-timeline fit, three escalating strategies:
+        #   1. borrow the trailing pause (inaudible - see _allowed_end_seconds)
+        #   2. edge engine: RE-SYNTHESIZE natively faster (sounds human,
+        #      unlike post-hoc stretching)
+        #   3. time-stretch the remainder (last resort, unbounded chain so
+        #      words are never dropped; trim only guards >4x pathology)
+        next_start = ordered[pos + 1][1].start if pos + 1 < len(ordered) else None
+        target_seconds = max(_allowed_end_seconds(seg.end, next_start) - seg.start, 0.2)
         grace_seconds = fade_samples / TIMELINE_SR
         seg_seconds = len(audio) / TIMELINE_SR
+
+        if seg_seconds > target_seconds + grace_seconds and engine == "edge":
+            ratio = seg_seconds / target_seconds
+            if 1.0 < ratio <= 1.8:
+                rate_boost = min(int((ratio - 1.0) * 100) + 3, 60)
+                logger.info(
+                    "Segment %d: re-synthesizing %d%% faster natively (%.2fs -> %.2fs target)",
+                    index, rate_boost, seg_seconds, target_seconds,
+                )
+                _synthesize_raw_refit(seg, mp3_path, rate_boost)
+                _mp3_to_wav(mp3_path, wav_path)
+                audio, _sr = sf.read(str(wav_path), dtype="float32")
+                if audio.ndim > 1:
+                    audio = audio.mean(axis=1)
+                seg_seconds = len(audio) / TIMELINE_SR
 
         if seg_seconds > target_seconds + grace_seconds:
             ratio = seg_seconds / target_seconds
             tempo = min(ratio, 4.0)
             if ratio > MAX_TEMPO:
                 logger.warning(
-                    "Segment %d overruns its original duration (%.2fs audio, %.2fs target) - atempo %.2f",
+                    "Segment %d overruns its slot (%.2fs audio, %.2fs allowed) - atempo %.2f",
                     index, seg_seconds, target_seconds, tempo,
                 )
             _mp3_to_wav(mp3_path, wav_path, tempo=tempo)

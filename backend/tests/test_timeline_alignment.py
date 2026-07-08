@@ -124,3 +124,17 @@ def test_short_audio_leaves_original_silence_intact(fake_engine, tmp_path):
     audio, sr = sf.read(str(out), dtype="float32")
     gap = audio[int(3.2 * sr) : int(3.8 * sr)]  # inside the original pause
     assert np.abs(gap).max() < 1e-4
+
+
+def test_moderate_overrun_borrows_trailing_pause_instead_of_stretching(fake_engine, tmp_path):
+    # 2.4s of audio for a 2s segment followed by a 2s pause: the overflow
+    # fits in the allowed half-gap, so the speech must NOT be tempo-mangled
+    # and must end inside the borrowed window (never at the next start).
+    fake_engine.update({"a bit long": 2.4, "next": 1.0})
+    segments = [SpeechSegment(0.0, 2.0, "a bit long"), SpeechSegment(4.0, 5.5, "next")]
+    _, placements = tts_service.synthesize_timeline(
+        segments, "en-US-GuyNeural", 6.0, tmp_path / "w", tmp_path / "o.wav", engine="chatterbox"
+    )
+    assert abs(placements[0].end - 2.4) < 0.05  # untouched, not stretched
+    assert placements[0].end <= 3.0 + 0.02  # inside the borrow allowance
+    assert placements[1].start == 4.0  # next segment unmoved
