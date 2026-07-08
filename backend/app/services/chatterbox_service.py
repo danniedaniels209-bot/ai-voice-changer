@@ -109,10 +109,18 @@ def synthesize(
     except Exception as exc:
         raise SynthesisError(f"Chatterbox synthesis failed: {exc}") from exc
 
-    import torchaudio
+    import soundfile as sf
 
+    # soundfile instead of torchaudio.save: newer torchaudio picks its
+    # encoder from the file EXTENSION, and callers here write to extension-
+    # less/".raw" temp paths (narration engine's cache keys) before probing
+    # the real format — torchaudio then fails with "Couldn't allocate
+    # AVFormatContext". soundfile always writes WAV regardless of name.
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    torchaudio.save(str(output_path), wav.cpu(), model.sr)
+    audio = wav.cpu().numpy()
+    if audio.ndim > 1:
+        audio = audio.squeeze(0) if audio.shape[0] == 1 else audio.T
+    sf.write(str(output_path), audio, model.sr, format="WAV")
 
     if not output_path.exists() or output_path.stat().st_size == 0:
         raise SynthesisError(f"Chatterbox produced no audio for: '{text[:60]}...'")
