@@ -66,6 +66,14 @@ class AppSettings(BaseModel):
         default=True,
         description="Normalize final audio to YouTube's -14 LUFS loudness standard.",
     )
+    segment_editor: bool = Field(
+        default=True,
+        description=(
+            "Keep a completed tts/script job's editing data (recipe + "
+            "cached segments) so its narration can be edited and "
+            "re-exported. Off = temp files are cleaned immediately as before."
+        ),
+    )
     animated_captions: bool = Field(
         default=False,
         description=(
@@ -127,6 +135,7 @@ class AppSettingsUpdate(BaseModel):
     vertical_export: bool | None = None
     music_ducking: bool | None = None
     loudness_normalization: bool | None = None
+    segment_editor: bool | None = None
     animated_captions: bool | None = None
     custom_voices: bool | None = None
     rename_duplicates: bool | None = None

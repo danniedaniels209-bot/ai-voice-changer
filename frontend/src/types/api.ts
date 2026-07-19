@@ -79,6 +79,7 @@ export interface AppSettings {
   music_ducking: boolean;
   loudness_normalization: boolean;
   context_recognition: boolean;
+  segment_editor: boolean;
   animated_captions: boolean;
   custom_voices: boolean;
   rename_duplicates: boolean;
@@ -166,6 +167,7 @@ export interface ConvertRequest {
   script: string | null;
   chain: ChainStage | null;
   continuity: ContinuitySettings;
+  precision_alignment: boolean;
   narration_engine: NarrationEngine;
   exaggeration: number;
   voice_style: VoiceStyle;
@@ -193,4 +195,20 @@ export interface ApiErrorBody {
     message: string;
     details: Record<string, unknown>;
   };
+}
+
+export interface JobSegment {
+  id: number;
+  start: number;
+  end: number;
+  text: string;
+  seed: number;
+}
+
+export interface JobSegmentsResponse {
+  editable: boolean;
+  reason: string;
+  engine?: string;
+  voice?: string;
+  segments: JobSegment[];
 }

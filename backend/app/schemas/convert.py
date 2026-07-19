@@ -139,6 +139,16 @@ class ConvertRequest(BaseModel):
         default_factory=ContinuitySettings,
         description="Natural-continuity processing (off by default).",
     )
+    precision_alignment: bool = Field(
+        default=False,
+        description=(
+            "Anchor synthesized speech to the exact word timings of the "
+            "original (tts mode): phrases are split at natural speech "
+            "boundaries and placed precisely where the words were spoken. "
+            "Trades a little flow for word-accurate placement. Off = "
+            "previous behavior, unchanged."
+        ),
+    )
     voice_style: VoiceStyle = Field(
         default="standard",
         description=(

@@ -251,6 +251,22 @@ export function Settings() {
           <input
             type="checkbox"
             className="mt-0.5"
+            checked={settings.segment_editor}
+            onChange={(e) => save({ segment_editor: e.target.checked })}
+          />
+          <span>
+            <span className="block">Segment editor</span>
+            <span className="text-text-muted text-xs">
+              Keep a finished conversion's narration editable: fix a sentence, get a new take,
+              and re-export in seconds. Uses some temp disk space until the retention sweep.
+            </span>
+          </span>
+        </label>
+
+        <label className="flex items-start gap-2 text-sm">
+          <input
+            type="checkbox"
+            className="mt-0.5"
             checked={settings.animated_captions}
             onChange={(e) => save({ animated_captions: e.target.checked })}
           />

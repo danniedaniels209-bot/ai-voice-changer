@@ -16,11 +16,11 @@ def test_synthesize_timeline_chatterbox_engine(tmp_path, monkeypatch):
     sr = 24000
 
     def fake_chatterbox_synthesize(
-        text, output_path, reference_wav, exaggeration, device="cpu", stability=None
+        text, output_path, reference_wav, exaggeration, device="cpu", stability=None, seed=0
     ):
         # Write ~1s of tone per segment, like the real model would.
         t = np.linspace(0, 1.0, sr, endpoint=False)
-        sf.write(str(output_path), (0.3 * np.sin(2 * np.pi * 200 * t)).astype(np.float32), sr)
+        sf.write(str(output_path), (0.3 * np.sin(2 * np.pi * 200 * t)).astype(np.float32), sr, format="WAV")
         assert 0.0 <= exaggeration <= 1.0
         assert reference_wav.name == "en-US-GuyNeural.wav"
         return output_path

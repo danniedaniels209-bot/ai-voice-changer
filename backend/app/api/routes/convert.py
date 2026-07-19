@@ -118,6 +118,8 @@ def start_conversion(job_id: str, request: ConvertRequest) -> Job:
         )
         if request.narration_engine == "chatterbox":
             summary["Expressiveness"] = f"{request.exaggeration:.2f}"
+    if request.precision_alignment and request.mode == "tts":
+        summary["Word placement"] = "precision"
     if request.continuity and request.continuity.enabled:
         summary["Natural continuity"] = (
             f"on (stability {request.continuity.voice_stability}, "
@@ -151,6 +153,7 @@ def start_conversion(job_id: str, request: ConvertRequest) -> Job:
         request.narration_engine,
         request.exaggeration,
         request.continuity,
+        request.precision_alignment,
     )
     return claimed
 

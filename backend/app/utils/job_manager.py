@@ -110,12 +110,16 @@ def append_log(job_id: str, message: str) -> Job:
         return updated
 
 
-def claim_for_processing(job_id: str) -> Job:
+def claim_for_processing(job_id: str, allow_completed: bool = False) -> Job:
     """
     Atomically transition a job to PROCESSING. Raises AppError if it is
     already processing or finished, so two concurrent /convert calls can't
     both start a pipeline for the same job — the check and the status write
     happen under one lock acquisition.
+
+    `allow_completed=True` is for the segment editor's re-export: a COMPLETED
+    job may be reprocessed (a PROCESSING one still may not — the double-click
+    guard stays).
     """
     from app.core.errors import AppError
 
@@ -123,7 +127,8 @@ def claim_for_processing(job_id: str) -> Job:
         job = get_job(job_id)
         if job.status == JobStatus.PROCESSING:
             raise AppError(f"Job {job_id} is already processing.", details={"job_id": job_id})
-        if job.status in (JobStatus.COMPLETED, JobStatus.CANCELLED):
+        blocked = (JobStatus.CANCELLED,) if allow_completed else (JobStatus.COMPLETED, JobStatus.CANCELLED)
+        if job.status in blocked:
             raise AppError(
                 f"Job {job_id} is already {job.status} and cannot be restarted.",
                 details={"job_id": job_id, "status": job.status},

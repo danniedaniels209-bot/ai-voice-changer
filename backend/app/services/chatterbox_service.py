@@ -71,6 +71,7 @@ def synthesize(
     exaggeration: float,
     device: str = "cpu",
     stability: float | None = None,
+    seed: int = 0,
 ) -> Path:
     """
     Generates `text` as speech. With `reference_wav`, the voice is cloned
@@ -96,7 +97,9 @@ def synthesize(
         s = max(0.0, min(1.0, stability))
         kwargs["cfg_weight"] = 0.3 + 0.5 * s  # default 0.5 at s=0.4
         kwargs["temperature"] = 1.0 - 0.5 * s  # default 0.8 at s=0.4
-        torch.manual_seed(42)  # same noise draws per segment = consistent takes
+        # Same base seed = consistent takes across segments; the editor's
+        # "new take" bumps `seed` to draw a different-but-reproducible take.
+        torch.manual_seed(42 + seed)
 
     try:
         with _synth_lock:

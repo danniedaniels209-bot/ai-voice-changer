@@ -140,21 +140,29 @@ def _mp3_to_wav(mp3_path: Path, wav_path: Path, tempo: float = 1.0) -> None:
         raise SynthesisError(f"Could not decode synthesized audio: {tail}")
 
 
-def _allowed_end_seconds(seg_end: float, next_start: float | None) -> float:
+def _allowed_end_seconds(
+    seg_end: float,
+    next_start: float | None,
+    borrow_frac: float = 0.5,
+    borrow_cap: float = 1.2,
+) -> float:
     """
     How far a segment's audio may extend: past its ORIGINAL end into at most
-    half of its own trailing pause (capped at 1.2s), and never past the next
-    segment's start. Slightly shortening a pause is inaudible; time-stretching
-    speech is not - so pauses absorb overruns before tempo does.
+    `borrow_frac` of its own trailing pause (capped at `borrow_cap`), and
+    never past the next segment's start. Slightly shortening a pause is
+    inaudible; time-stretching speech is not - so pauses absorb overruns
+    before tempo does. Precision alignment passes a tiny cap so word
+    placement stays exact.
     """
     if next_start is None:
-        return seg_end + 1.2
+        return seg_end + borrow_cap
     gap = max(0.0, next_start - seg_end)
-    return min(next_start, seg_end + min(gap * 0.5, 1.2))
+    return min(next_start, seg_end + min(gap * borrow_frac, borrow_cap))
 
 
 def _validate_reconstruction(
-    fitted: list, master: list, fade_samples: int
+    fitted: list, master: list, fade_samples: int,
+    borrow_frac: float = 0.5, borrow_cap: float = 1.2,
 ) -> None:
     """
     Master-timeline validation, run before any audio is written. `master`
@@ -212,7 +220,9 @@ def _validate_reconstruction(
         prev_start = start_idx
 
         next_start = master[master.index(entry) + 1][1] if master.index(entry) + 1 < len(master) else None
-        max_end = int(_allowed_end_seconds(m_end, next_start) * TIMELINE_SR) + fade_samples + 4
+        max_end = int(
+            _allowed_end_seconds(m_end, next_start, borrow_frac, borrow_cap) * TIMELINE_SR
+        ) + fade_samples + 4
         if start_idx + len(audio) > max_end:
             problems.append(
                 f"OVERRUN: {_describe(entry)} extends "
@@ -226,6 +236,70 @@ def _validate_reconstruction(
         )
 
 
+def _render_cached(
+    work_dir: Path,
+    text: str,
+    voice: str,
+    engine: str,
+    exaggeration: float,
+    stability: float | None,
+    seed: int,
+    device: str,
+    reference_wav: Path | None,
+) -> Path:
+    """
+    Renders one utterance to a normalized wav, cached by a content hash of
+    everything that affects the sound. Unedited segments therefore cost
+    nothing on re-export, and editor previews reuse the exact audio that
+    will land in the final track. Tempo-fitting never touches this cache -
+    fitted copies are written separately, because fit depends on neighbors.
+    """
+    import hashlib
+
+    key = hashlib.sha1(
+        f"{engine}|{voice}|{text}|{exaggeration}|{stability}|{seed}".encode("utf-8")
+    ).hexdigest()[:16]
+    wav = work_dir / f"seg_{key}.wav"
+    if wav.exists():
+        return wav
+
+    raw = work_dir / f"seg_{key}.raw"
+    if engine == "chatterbox":
+        from app.services.chatterbox_service import synthesize as chatterbox_synthesize
+
+        chatterbox_synthesize(
+            text, raw, reference_wav, exaggeration, device=device,
+            stability=stability, seed=seed,
+        )
+    else:
+        _synthesize_one(text, voice, raw)
+    _mp3_to_wav(raw, wav)
+    raw.unlink(missing_ok=True)
+    return wav
+
+
+def synthesize_single(
+    work_dir: Path,
+    text: str,
+    voice: str,
+    engine: str = "edge",
+    exaggeration: float = 0.5,
+    stability: float | None = None,
+    seed: int = 0,
+    device: str = "cpu",
+) -> Path:
+    """Segment-editor previews: render exactly one utterance (cached)."""
+    reference_wav = None
+    if engine == "chatterbox":
+        from app.services.expressive_service import ensure_reference_audio
+
+        reference_wav = ensure_reference_audio(voice)
+    work_dir.mkdir(parents=True, exist_ok=True)
+    return _render_cached(
+        work_dir, text, voice, engine, exaggeration, stability, seed, device, reference_wav
+    )
+
+
 def synthesize_timeline(
     segments: list[SpeechSegment],
     voice: str,
@@ -237,6 +311,8 @@ def synthesize_timeline(
     exaggeration: float = 0.5,
     device: str = "cpu",
     continuity=None,
+    strict_fit: bool = False,
+    seeds: dict[int, int] | None = None,
 ) -> tuple[Path, list[SpeechSegment]]:
     """
     Synthesizes every segment with the chosen voice and assembles them into
@@ -256,22 +332,19 @@ def synthesize_timeline(
     if continuity is not None and continuity.enabled:
         stability = continuity.voice_stability / 100.0
 
+    seeds = seeds or {}
+    # Precision alignment: words must land exactly where they were spoken -
+    # borrow only a hair of trailing silence before tempo-fitting kicks in.
+    borrow_frac = 1.0 if strict_fit else 0.5
+    borrow_cap = 0.15 if strict_fit else 1.2
+
+    reference_wav = None
     if engine == "chatterbox":
         # Chatterbox clones the target voice from reference audio — reuse the
         # per-voice reference clips cached for OpenVoice.
-        from app.services.chatterbox_service import synthesize as chatterbox_synthesize
         from app.services.expressive_service import ensure_reference_audio
 
         reference_wav = ensure_reference_audio(voice)
-
-        def _synthesize_raw(text: str, raw_path: Path) -> None:
-            chatterbox_synthesize(
-                text, raw_path, reference_wav, exaggeration, device=device, stability=stability
-            )
-    else:
-
-        def _synthesize_raw(text: str, raw_path: Path) -> None:
-            _synthesize_one(text, voice, raw_path)
 
     def _synthesize_raw_refit(seg, raw_path: Path, rate_boost: int) -> None:
         _synthesize_one(seg.text, voice, raw_path, rate_pct=rate_boost)
@@ -304,14 +377,18 @@ def synthesize_timeline(
     # ---- Phase 1: synthesize + duration-fit, strictly chronological -------
     fitted: list[tuple[int, SpeechSegment, np.ndarray, int]] = []
     for pos, (index, seg) in enumerate(ordered):
-        # "mp3" is just the raw-synthesis file name — ffmpeg sniffs the real
-        # format, so the chatterbox path can write wav under the same name.
-        mp3_path = work_dir / f"seg_{index:04d}.mp3"
-        wav_path = work_dir / f"seg_{index:04d}.wav"
+        cached_wav = _render_cached(
+            work_dir, seg.text, voice, engine, exaggeration, stability,
+            seeds.get(index, 0), device, reference_wav,
+        )
+        # Scratch names for fit products (refit takes, tempo-fitted copies):
+        # index-named so they never collide with the content-hash cache.
+        mp3_path = work_dir / f"fit_{index:04d}.mp3"
+        wav_path = work_dir / f"fit_{index:04d}.wav"
+        import shutil as _shutil
 
-        _synthesize_raw(seg.text, mp3_path)
-        _mp3_to_wav(mp3_path, wav_path)
-        audio, _sr = sf.read(str(wav_path), dtype="float32")
+        _shutil.copyfile(cached_wav, mp3_path)  # ffmpeg sniffs real format
+        audio, _sr = sf.read(str(cached_wav), dtype="float32")
         if audio.ndim > 1:
             audio = audio.mean(axis=1)
 
@@ -322,7 +399,9 @@ def synthesize_timeline(
         #   3. time-stretch the remainder (last resort, unbounded chain so
         #      words are never dropped; trim only guards >4x pathology)
         next_start = ordered[pos + 1][1].start if pos + 1 < len(ordered) else None
-        target_seconds = max(_allowed_end_seconds(seg.end, next_start) - seg.start, 0.2)
+        target_seconds = max(
+            _allowed_end_seconds(seg.end, next_start, borrow_frac, borrow_cap) - seg.start, 0.2
+        )
         grace_seconds = fade_samples / TIMELINE_SR
         seg_seconds = len(audio) / TIMELINE_SR
 
@@ -380,7 +459,7 @@ def synthesize_timeline(
             progress_callback((pos + 1) / len(ordered) * 100.0)
 
     # ---- Phase 2: validation against the master timeline ------------------
-    _validate_reconstruction(fitted, master, fade_samples)
+    _validate_reconstruction(fitted, master, fade_samples, borrow_frac, borrow_cap)
 
     # ---- Phase 3: overlap-add reconstruction in chronological order -------
     for index, seg, audio, start_idx in fitted:

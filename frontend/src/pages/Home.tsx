@@ -82,6 +82,7 @@ export function Home() {
   const [selectedVoice, setSelectedVoice] = useState<string>("");
   const [script, setScript] = useState("");
   const [skipSeparation, setSkipSeparation] = useState(false);
+  const [precisionAlignment, setPrecisionAlignment] = useState(false);
   const [voiceStyle, setVoiceStyle] = useState<VoiceStyle>("standard");
   const [params, setParams] = useState<VoiceConversionParams>(DEFAULT_VOICE_PARAMS);
   const [activePreset, setActivePreset] = useState<string | null>(null);
@@ -197,6 +198,7 @@ export function Home() {
           tts_voice: selectedVoice || "en-US-GuyNeural",
           script: mode === "script" ? script : null,
           continuity,
+          precision_alignment: mode === "tts" ? precisionAlignment : false,
           narration_engine: narrationEngine,
           exaggeration,
           chain: chainEnabled
@@ -363,6 +365,23 @@ export function Home() {
                   onChange={(e) => setExaggeration(Number(e.target.value))}
                   className="w-full"
                 />
+              </label>
+            )}
+            {mode === "tts" && (
+              <label className="flex items-start gap-2 mt-3 text-sm cursor-pointer">
+                <input
+                  type="checkbox"
+                  className="mt-0.5"
+                  checked={precisionAlignment}
+                  onChange={(e) => setPrecisionAlignment(e.target.checked)}
+                />
+                <span>
+                  <span className="font-medium block">Precision word placement (Beta)</span>
+                  <span className="text-text-muted text-xs">
+                    Anchors each phrase exactly where the original words were spoken — best
+                    lip-sync accuracy, slightly less flowing delivery. Off = smoother flow.
+                  </span>
+                </span>
               </label>
             )}
             {mode === "tts" && (

@@ -24,8 +24,8 @@ def fake_engine(monkeypatch, tmp_path):
     """Chatterbox mock whose per-segment audio duration we control by text."""
     durations: dict[str, float] = {}
 
-    def fake_synth(text, output_path, reference_wav, exaggeration, device="cpu", stability=None):
-        sf.write(str(output_path), _tone(durations.get(text, 1.0)), TIMELINE_SR)
+    def fake_synth(text, output_path, reference_wav, exaggeration, device="cpu", stability=None, seed=0):
+        sf.write(str(output_path), _tone(durations.get(text, 1.0)), TIMELINE_SR, format="WAV")
         return output_path
 
     ref = tmp_path / "ref.wav"

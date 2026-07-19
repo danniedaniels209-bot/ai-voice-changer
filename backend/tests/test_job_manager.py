@@ -67,3 +67,17 @@ def test_cancel_flag_roundtrip():
     assert not job_manager.is_cancel_requested(job.id)
     job_manager.request_cancel(job.id)
     assert job_manager.is_cancel_requested(job.id)
+
+
+def test_completed_job_reclaimable_only_with_allow_completed():
+    job = job_manager.create_job()
+    job_manager.update_job(job.id, status=JobStatus.COMPLETED)
+    # Normal conversion path must still refuse...
+    with pytest.raises(AppError):
+        job_manager.claim_for_processing(job.id)
+    # ...but the segment editor's re-export may reprocess it.
+    reclaimed = job_manager.claim_for_processing(job.id, allow_completed=True)
+    assert reclaimed.status == JobStatus.PROCESSING
+    # And a running re-export still blocks a second click.
+    with pytest.raises(AppError):
+        job_manager.claim_for_processing(job.id, allow_completed=True)
