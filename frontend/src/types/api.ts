@@ -174,6 +174,7 @@ export interface ConvertRequest {
   voice_style: VoiceStyle;
   params: VoiceConversionParams;
   skip_separation: boolean;
+  compress_output: boolean;
 }
 
 export interface CustomVoiceInfo {

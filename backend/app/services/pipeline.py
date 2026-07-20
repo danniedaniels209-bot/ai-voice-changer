@@ -71,6 +71,7 @@ def run_pipeline(
     continuity=None,
     precision: bool = False,
     dub_language: str | None = None,
+    compress_output: bool = False,
 ) -> None:
     """Entry point for the worker pool task submitted by POST /convert."""
     try:
@@ -259,6 +260,7 @@ def run_pipeline(
                 "naturalness": continuity.naturalness
                 if (continuity is not None and continuity.enabled) else 0,
                 "strict_fit": bool(precision),
+                "compress": bool(compress_output),
                 "total_duration": job.video_metadata.duration_seconds
                 if job.video_metadata else None,
                 "background": str(background_path) if background_path else None,
@@ -274,7 +276,7 @@ def run_pipeline(
 
         finalize_export(
             job_id, job, video_path, converted_voice_path, background_path,
-            subtitle_cues, app_settings, job_dir,
+            subtitle_cues, app_settings, job_dir, compress=compress_output,
         )
 
         if app_settings.delete_temp_on_success:
@@ -543,6 +545,7 @@ def finalize_export(
     subtitle_cues: list,
     app_settings,
     job_dir: Path,
+    compress: bool = False,
 ) -> Path:
     """
     Mix + subtitle + mux + verify + publish + job completion — shared by the
@@ -568,6 +571,18 @@ def finalize_export(
     _advance(job_id, PipelineStage.MUXING_VIDEO, "Exporting final video...")
     quality_presets = _export_quality_presets()
     preset = quality_presets.get(app_settings.export_quality, quality_presets["high"])
+
+    # Compress mode re-encodes the video at CRF 26 (or the preset's CRF if
+    # it's already smaller-file than that) instead of stream-copying the
+    # source — phone/CapCut exports often carry 8-16 Mbps the content
+    # doesn't need. Opt-in per job; off = bit-exact video.
+    video_crf = preset["video_crf"]
+    if compress:
+        video_crf = str(max(int(video_crf), 26))
+        job_manager.append_log(
+            job_id, "Compressing file size: re-encoding video (CRF "
+            f"{video_crf}) — expect a much smaller export."
+        )
 
     export_dir = get_effective_export_dir()
     # Name the export after the user's original file, not the internal
@@ -604,10 +619,11 @@ def finalize_export(
         video_path,
         merged_audio_path,
         tmp_export,
-        video_crf=preset["video_crf"],
+        video_crf=video_crf,
         audio_bitrate=preset["audio_bitrate"],
         normalize_loudness=app_settings.loudness_normalization,
         burn_subtitles_path=burn_path,
+        force_reencode=compress,
     )
     if app_settings.verify_exports:
         safe_export.verify_export(tmp_export)
@@ -635,7 +651,7 @@ def finalize_export(
         job_manager.append_log(job_id, "Exporting vertical (9:16) variant for Shorts...")
         tmp_vertical = job_dir / "export_vertical.tmp.mp4"
         ffmpeg_service.export_vertical_variant(
-            output_path, tmp_vertical, video_crf=preset["video_crf"]
+            output_path, tmp_vertical, video_crf=video_crf
         )
         if app_settings.verify_exports:
             safe_export.verify_export(tmp_vertical)
@@ -752,7 +768,7 @@ def run_reexport(job_id: str, edited_segments: list[dict]) -> None:
 
         finalize_export(
             job_id, job, Path(job.video_path), converted_voice_path, background,
-            placements, app_settings, job_dir,
+            placements, app_settings, job_dir, compress=bool(recipe.get("compress")),
         )
 
     except JobInterruptedError as exc:

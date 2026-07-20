@@ -178,3 +178,12 @@ class ConvertRequest(BaseModel):
             "converted along with the voice rather than preserved untouched."
         ),
     )
+    compress_output: bool = Field(
+        default=False,
+        description=(
+            "Re-encode the video at export (CRF 26) for a much smaller file — "
+            "useful for high-bitrate editor exports (CapCut etc. often produce "
+            "200 MB+ files). Off (default) stream-copies the video bit-exact, "
+            "keeping the original quality untouched."
+        ),
+    )

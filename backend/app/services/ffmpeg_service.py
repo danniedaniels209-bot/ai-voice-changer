@@ -229,6 +229,7 @@ def mux_audio_into_video(
     audio_bitrate: str = "256k",
     normalize_loudness: bool = False,
     burn_subtitles_path: Path | None = None,
+    force_reencode: bool = False,
 ) -> Path:
     """
     Replaces the video's audio track with a new one. The video itself must
@@ -237,6 +238,10 @@ def mux_audio_into_video(
     That only fails when the source codec genuinely can't be held by an MP4
     container as-is (e.g. some WEBM/VP9 or exotic AVI codecs); in that case
     it falls back to re-encoding with libx264 so the export doesn't just fail.
+
+    force_reencode skips the stream-copy path entirely — used by the
+    "compress file size" option, where re-encoding at the given CRF is the
+    point (source exports from phone editors often carry huge bitrates).
     """
     ffmpeg_path, _ = resolve_ffmpeg_binaries()
     output_video_path.parent.mkdir(parents=True, exist_ok=True)
@@ -266,6 +271,12 @@ def mux_audio_into_video(
             [*base_cmd, "-vf", _subtitles_filter_arg(burn_subtitles_path), *encode_args, str(output_video_path)],
             error_cls=InvalidVideoError,
             error_message=f"Failed to burn captions into '{video_path.name}'",
+        )
+    elif force_reencode:
+        _run(
+            [*base_cmd, *encode_args, str(output_video_path)],
+            error_cls=InvalidVideoError,
+            error_message=f"Failed to export compressed video for '{video_path.name}'",
         )
     else:
         try:

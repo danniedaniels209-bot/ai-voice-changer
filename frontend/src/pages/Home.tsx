@@ -83,6 +83,7 @@ export function Home() {
   const [selectedVoice, setSelectedVoice] = useState<string>("");
   const [script, setScript] = useState("");
   const [skipSeparation, setSkipSeparation] = useState(false);
+  const [compressOutput, setCompressOutput] = useState(false);
   const [precisionAlignment, setPrecisionAlignment] = useState(false);
   const [dubLanguages, setDubLanguages] = useState<DubLanguage[]>([]);
   const [dubLanguage, setDubLanguage] = useState<string>("");
@@ -223,6 +224,7 @@ export function Home() {
           voice_style: mode === "rvc" ? voiceStyle : "standard",
           params,
           skip_separation: mode === "script" ? true : skipSeparation,
+          compress_output: compressOutput,
         });
         jobIds.push(job.id);
       }
@@ -263,6 +265,21 @@ export function Home() {
       <section>
         <h3 className="text-sm font-medium text-text-muted mb-2">1. Video(s)</h3>
         <FileDropzone files={files} onFilesSelected={setFiles} />
+        <label className="flex items-start gap-2 mt-3 text-sm cursor-pointer">
+          <input
+            type="checkbox"
+            className="mt-0.5"
+            checked={compressOutput}
+            onChange={(e) => setCompressOutput(e.target.checked)}
+          />
+          <span>
+            <span className="font-medium">Compress file size</span>
+            <span className="block text-text-muted">
+              Shrinks big editor exports (200 MB+ CapCut files) by re-encoding the video.
+              Off = original video quality kept untouched, bit-exact.
+            </span>
+          </span>
+        </label>
       </section>
 
       <section>

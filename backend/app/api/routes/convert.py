@@ -151,6 +151,8 @@ def start_conversion(job_id: str, request: ConvertRequest) -> Job:
         )
     if request.skip_separation and request.mode != "script":
         summary["Background separation"] = "skipped"
+    if request.compress_output:
+        summary["File size"] = "compressed (re-encoded)"
 
     # Atomic check-and-set: prevents two concurrent /convert calls from both
     # starting a pipeline for the same job.
@@ -173,6 +175,7 @@ def start_conversion(job_id: str, request: ConvertRequest) -> Job:
         request.continuity,
         request.precision_alignment,
         request.dub_language,
+        request.compress_output,
     )
     return claimed
 
