@@ -23,8 +23,19 @@ export function scriptgenStatus(): Promise<ScriptgenStatus> {
   return apiGet<ScriptgenStatus>("/scriptgen/status");
 }
 
-export function chatWithLlm(messages: ChatMessage[]): Promise<{ reply: string }> {
-  return apiPost<{ reply: string }>("/scriptgen/chat", { messages });
+export interface ChatToolCall {
+  tool: string;
+  args: Record<string, unknown>;
+  ok: boolean;
+}
+
+export interface ChatResponse {
+  reply: string;
+  tool_calls: ChatToolCall[];
+}
+
+export function chatWithLlm(messages: ChatMessage[]): Promise<ChatResponse> {
+  return apiPost<ChatResponse>("/scriptgen/chat", { messages });
 }
 
 export function generateOutline(topic: string, settings: GenSettings): Promise<{ outline: string[] }> {

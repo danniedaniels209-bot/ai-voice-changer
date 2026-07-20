@@ -31,9 +31,11 @@ const ACTION_PROMPTS: Record<string, { label: string; prompt: string }> = {
   keywords: { label: "Keywords", prompt: "List 15 SEO keywords/tags for this script:\n\n" },
 };
 
+type DisplayMessage = ChatMessage & { tools?: string[] };
+
 export function Chat() {
   const [status, setStatus] = useState<ScriptgenStatus | null>(null);
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [messages, setMessages] = useState<DisplayMessage[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -53,15 +55,20 @@ export function Chat() {
   async function handleSend() {
     const text = input.trim();
     if (!text || busy) return;
-    const next: ChatMessage[] = [...messages, { role: "user", content: text }];
+    const next: DisplayMessage[] = [...messages, { role: "user", content: text }];
     setMessages(next);
     setInput("");
     setBusy(true);
     setError(null);
     try {
       // Send only the recent turns — the model's context is finite.
-      const { reply } = await chatWithLlm(next.slice(-20));
-      setMessages([...next, { role: "assistant", content: reply }]);
+      const { reply, tool_calls } = await chatWithLlm(
+        next.slice(-20).map(({ role, content }) => ({ role, content })),
+      );
+      setMessages([
+        ...next,
+        { role: "assistant", content: reply, tools: tool_calls.map((t) => t.tool) },
+      ]);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err));
       setMessages(messages); // roll back the optimistic user turn
@@ -103,7 +110,9 @@ export function Chat() {
       <div className="rounded-md border border-border bg-surface min-h-[320px] max-h-[55vh] overflow-y-auto p-4 space-y-3">
         {messages.length === 0 && (
           <p className="text-text-muted text-sm">
-            No messages yet. Pick an action below or just start typing.
+            No messages yet. Pick an action below or just start typing. Qwen can also
+            work with your conversions — try "list my jobs", "show the transcript of my
+            last video", or "make segment 3 sound more exciting".
           </p>
         )}
         {messages.map((m, i) => (
@@ -113,6 +122,11 @@ export function Chat() {
                 m.role === "user" ? "bg-accent text-white" : "bg-bg border border-border"
               }`}
             >
+              {m.tools && m.tools.length > 0 && (
+                <div className="text-xs text-text-muted italic mb-1.5">
+                  ⚙ used {m.tools.join(", ")}
+                </div>
+              )}
               {m.content}
             </div>
           </div>
