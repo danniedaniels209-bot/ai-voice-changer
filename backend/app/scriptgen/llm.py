@@ -179,6 +179,19 @@ def _run(messages: list[dict], max_new_tokens: int) -> str:
         )
     inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
 
+    # Different model families end their turn with different tokens (Qwen:
+    # <|im_end|>, Llama 3 / Hermes: <|eot_id|>). If generate() only watches
+    # the config's default eos, a mismatched model never stops — it fills the
+    # whole token budget and the request times out with no reply. Stop on
+    # every known end-of-turn token the tokenizer actually has.
+    stop_ids: set[int] = set()
+    if tokenizer.eos_token_id is not None:
+        stop_ids.add(tokenizer.eos_token_id)
+    for token in ("<|eot_id|>", "<|im_end|>", "<|end_of_text|>", "<|endoftext|>"):
+        tid = tokenizer.convert_tokens_to_ids(token)
+        if isinstance(tid, int) and tid >= 0 and tid != getattr(tokenizer, "unk_token_id", None):
+            stop_ids.add(tid)
+
     # Serialized: a 3B model on a T4 is fast enough that queueing beats the
     # VRAM cost of concurrency.
     with _lock, torch.no_grad():
@@ -188,7 +201,10 @@ def _run(messages: list[dict], max_new_tokens: int) -> str:
             do_sample=True,
             temperature=0.7,
             top_p=0.9,
-            pad_token_id=tokenizer.eos_token_id,
+            eos_token_id=sorted(stop_ids) if stop_ids else None,
+            pad_token_id=tokenizer.pad_token_id
+            if tokenizer.pad_token_id is not None
+            else tokenizer.eos_token_id,
         )
     text = tokenizer.decode(output[0][inputs["input_ids"].shape[1]:], skip_special_tokens=True)
     return _strip_thinking(text)

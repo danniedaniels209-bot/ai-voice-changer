@@ -146,9 +146,14 @@ def chat(request: ChatRequest) -> dict:
     tool_trace: list[dict] = []
     reply = ""
     for _ in range(tools.MAX_TOOL_ROUNDS + 1):
-        # Effectively uncapped: generation stops at the model's natural end;
-        # this ceiling only exists because HF generate() requires one.
-        reply = llm.chat(messages, max_new_tokens=16384)
+        # Generation stops at the model's natural end; the ceiling exists
+        # because a reply that takes >100s to generate is killed by the cloud
+        # tunnel anyway — 4096 tokens is the most that reliably arrives.
+        import os as _os
+
+        reply = llm.chat(
+            messages, max_new_tokens=int(_os.environ.get("AVC_CHAT_MAX_TOKENS", "4096"))
+        )
         call = tools.parse_tool_call(reply)
         if call is None or len(tool_trace) >= tools.MAX_TOOL_ROUNDS:
             break
