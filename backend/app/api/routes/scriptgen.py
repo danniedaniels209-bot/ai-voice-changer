@@ -45,7 +45,41 @@ class ChatMessage(BaseModel):
 
 
 class ChatRequest(BaseModel):
-    messages: list[ChatMessage] = Field(min_length=1, max_length=80)
+    messages: list[ChatMessage] = Field(min_length=1, max_length=500)
+
+
+_APP_OVERVIEW = """
+The app you live in (so you can advise and ask the right questions about any of it):
+- Conversion modes: "tts" re-voices existing speech with an AI narrator at the
+  exact original timings; "script" narrates user-provided text over the video;
+  "rvc" converts the voice's timbre with a trained model, keeping the original
+  delivery (pitch/auto-pitch/index/protect settings, 'Preserve Speaking Style'
+  option); "openvoice" clones expressively.
+- Engines for tts/script: "edge" = fast cloud Microsoft voices (16 English
+  voices across US/UK/AU/IE/IN accents); "chatterbox" = local human-like model
+  with voice cloning and an expressiveness dial 0..1 (0 calm, 0.5 natural,
+  1 dramatic). Custom voices: users can upload a sample and clone it
+  (chatterbox engine only).
+- Translation dubbing (tts mode, GPU): es fr de pt hi it ja ko ar ru, two
+  voices per language, timing preserved.
+- Precision word placement (tts): anchors each phrase exactly where the
+  original words were spoken - best lip-sync, slightly less flow.
+- Natural continuity: merges speech across brief pauses and keeps energy
+  consistent (context window, stability, prosody, naturalness sliders).
+- Merge modes: chain a second conversion (e.g. narrate with edge, then RVC).
+- Background handling: music/effects are separated and preserved, with music
+  ducking and loudness normalization options; separation can be skipped.
+- Export: quality presets low/medium/high/lossless; video is stream-copied
+  bit-exact unless captions are burned or "compress file size" is on
+  (CRF 26 re-encode for big CapCut-style files); subtitles (.srt), burned or
+  animated captions, vertical 9:16 variant for Shorts.
+- Segment editor: after a tts/script conversion users (or you, via
+  edit_segment) can rewrite any narration line, preview it, get a new take,
+  and re-export - only changed lines re-render thanks to caching.
+- Script Studio: topic -> outline -> full script, plus 18 assist actions
+  (rewrite/summarize/titles/description/chapters/keywords/etc).
+- Cloud GPU sessions (Colab) unlock you, Whisper large-v3, best separation.
+""".strip()
 
 
 def _chat_system() -> str:
@@ -55,6 +89,7 @@ def _chat_system() -> str:
         "You are a helpful creative assistant inside a video voice-changer app. "
         "You help users write, rewrite, and brainstorm narration scripts, titles, "
         "descriptions, and other video content. Be concise and practical.\n\n"
+        f"{_APP_OVERVIEW}\n\n"
         "You can use these tools to work with the user's conversions:\n"
         f"{tools.TOOL_SPECS}\n\n"
         "To use a tool, reply with ONLY this (no other text):\n"
@@ -92,7 +127,9 @@ def chat(request: ChatRequest) -> dict:
     tool_trace: list[dict] = []
     reply = ""
     for _ in range(tools.MAX_TOOL_ROUNDS + 1):
-        reply = llm.chat(messages, max_new_tokens=4000)
+        # Effectively uncapped: generation stops at the model's natural end;
+        # this ceiling only exists because HF generate() requires one.
+        reply = llm.chat(messages, max_new_tokens=16384)
         call = tools.parse_tool_call(reply)
         if call is None or len(tool_trace) >= tools.MAX_TOOL_ROUNDS:
             break

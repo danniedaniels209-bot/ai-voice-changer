@@ -60,9 +60,8 @@ export function Chat() {
     setBusy(true);
     setError(null);
     try {
-      // Send only the recent turns — the model's context is finite.
       const { reply, tool_calls } = await chatWithLlm(
-        next.slice(-40).map(({ role, content }) => ({ role, content })),
+        next.map(({ role, content }) => ({ role, content })),
       );
       setMessages([
         ...next,
