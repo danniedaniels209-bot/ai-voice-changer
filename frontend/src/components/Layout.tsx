@@ -79,12 +79,12 @@ export function Layout() {
         {/* ── Sidebar ── */}
         <aside
           className={`shrink-0 flex flex-col border-r border-border bg-surface transition-[width] duration-200 ${
-            collapsed ? "w-16" : "w-[232px]"
+            collapsed ? "w-[84px]" : "w-[300px]"
           }`}
         >
           <NavLink
             to="/"
-            className="flex items-center gap-2.5 px-4 h-14 shrink-0 border-b border-border hover:bg-surface-hover transition-colors"
+            className="flex items-center gap-2.5 px-5 h-[72px] shrink-0 border-b border-border hover:bg-surface-hover transition-colors"
           >
             <Diamond size={18} className="text-accent shrink-0" strokeWidth={2.2} />
             {!collapsed && (
@@ -179,8 +179,8 @@ export function Layout() {
 
         {/* ── Main column ── */}
         <div className="flex-1 flex flex-col min-w-0">
-          <header className="h-14 shrink-0 border-b border-border flex items-center px-6 gap-3">
-            <h1 className="text-sm font-semibold tracking-tight text-text truncate">
+          <header className="h-[72px] shrink-0 border-b border-border flex items-center px-8 gap-3">
+            <h1 className="text-lg font-semibold tracking-tight text-text truncate">
               {title}
             </h1>
             <div className="flex-1" />
@@ -203,14 +203,14 @@ export function Layout() {
           <main className="flex-1 overflow-y-auto min-h-0">
             <div
               key={location.pathname}
-              className="max-w-5xl w-full mx-auto px-8 py-8 animate-rise"
+              className="max-w-6xl w-full mx-auto px-8 py-8 animate-rise"
             >
               <Outlet />
             </div>
           </main>
 
           {/* ── Status bar ── */}
-          <footer className="h-7 shrink-0 border-t border-border glass flex items-center px-4 gap-4 text-[11px] font-medium text-text-muted">
+          <footer className="h-8 shrink-0 border-t border-border glass flex items-center px-4 gap-4 text-xs font-medium text-text-muted">
             <span className="flex items-center gap-1.5">
               <span
                 className={`w-1.5 h-1.5 rounded-full ${health ? "bg-success" : "bg-danger"}`}

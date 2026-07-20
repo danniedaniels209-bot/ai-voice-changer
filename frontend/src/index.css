@@ -8,27 +8,27 @@
 @theme {
   /* Color */
   --color-bg: #0b0d10;
-  --color-surface: #13161b;
-  --color-surface-hover: #1b1f26;
-  --color-elevated: #1b1f26;
-  --color-border: rgba(255, 255, 255, 0.08);
-  --color-border-strong: rgba(255, 255, 255, 0.14);
-  --color-accent: #4f8cff;
+  --color-surface: #12161d;
+  --color-surface-hover: #202734;
+  --color-elevated: #191f28;
+  --color-border: rgba(255, 255, 255, 0.06);
+  --color-border-strong: rgba(255, 255, 255, 0.12);
+  --color-accent: #4e8cff;
   --color-accent-hover: #6ea1ff;
-  --color-accent-dim: rgba(79, 140, 255, 0.12);
-  --color-text: #f5f7fa;
-  --color-text-muted: #8a93a3;
-  --color-text-faint: rgba(138, 147, 163, 0.55);
-  --color-success: #3ccf91;
-  --color-warning: #ffb547;
-  --color-danger: #ff5f6d;
+  --color-accent-dim: rgba(78, 140, 255, 0.12);
+  --color-text: #f8fafc;
+  --color-text-muted: #a0aec0;
+  --color-text-faint: #6b7280;
+  --color-success: #2dd4bf;
+  --color-warning: #f59e0b;
+  --color-danger: #ef4444;
 
   /* Radius scale — bumps every rounded-* in the app */
-  --radius-sm: 8px;
-  --radius-md: 12px;
-  --radius-lg: 16px;
-  --radius-xl: 18px;
-  --radius-2xl: 20px;
+  --radius-sm: 10px;
+  --radius-md: 14px;
+  --radius-lg: 18px;
+  --radius-xl: 24px;
+  --radius-2xl: 24px;
 
   /* Elevation */
   --shadow-lift: 0 4px 16px rgba(0, 0, 0, 0.35);

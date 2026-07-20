@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
+import { ChevronDown } from "lucide-react";
 import { FileDropzone } from "../components/FileDropzone";
 import { Button } from "../components/Button";
 import { listModels } from "../api/models";
@@ -67,6 +68,48 @@ const MODE_OPTIONS: { id: ConversionMode; title: string; blurb: string }[] = [
     blurb: "Keeps the original delivery, changes the voice's timbre to a model from your library.",
   },
 ];
+
+function Disclosure({
+  title,
+  hint,
+  badge,
+  children,
+}: {
+  title: string;
+  hint: string;
+  badge?: number;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <section className="border border-border rounded-lg bg-surface/50">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="w-full flex items-center justify-between gap-3 px-5 py-4 text-left rounded-lg hover:bg-surface-hover/40 transition-colors"
+      >
+        <span>
+          <span className="font-medium text-sm flex items-center gap-2">
+            {title}
+            {!!badge && (
+              <span className="rounded-full bg-accent-dim text-accent text-xs px-2 py-0.5">
+                {badge} on
+              </span>
+            )}
+          </span>
+          <span className="text-xs text-text-muted">{hint}</span>
+        </span>
+        <ChevronDown
+          size={16}
+          className={`shrink-0 text-text-muted transition-transform duration-200 ${
+            open ? "rotate-180" : ""
+          }`}
+        />
+      </button>
+      {open && <div className="px-5 pb-5 space-y-4 animate-rise-fast">{children}</div>}
+    </section>
+  );
+}
 
 export function Home() {
   const navigate = useNavigate();
@@ -230,6 +273,13 @@ export function Home() {
   }
 
   const showVoicePicker = mode === "tts" || mode === "script" || mode === "openvoice";
+  const advancedCount = [
+    compressOutput,
+    mode === "tts" && precisionAlignment,
+    continuity.enabled,
+    chainEnabled,
+    mode !== "script" && skipSeparation,
+  ].filter(Boolean).length;
 
   return (
     <div className="space-y-8">
@@ -254,21 +304,6 @@ export function Home() {
       <section>
         <h3 className="text-sm font-medium text-text-muted mb-2">1. Video(s)</h3>
         <FileDropzone files={files} onFilesSelected={setFiles} />
-        <label className="flex items-start gap-2 mt-3 text-sm cursor-pointer">
-          <input
-            type="checkbox"
-            className="mt-0.5"
-            checked={compressOutput}
-            onChange={(e) => setCompressOutput(e.target.checked)}
-          />
-          <span>
-            <span className="font-medium">Compress file size</span>
-            <span className="block text-text-muted">
-              Shrinks big editor exports (200 MB+ CapCut files) by re-encoding the video.
-              Off = original video quality kept untouched, bit-exact.
-            </span>
-          </span>
-        </label>
       </section>
 
       <section>
@@ -430,23 +465,6 @@ export function Home() {
                   </label>
                 )}
               </div>
-            )}
-            {mode === "tts" && (
-              <label className="flex items-start gap-2 mt-3 text-sm cursor-pointer">
-                <input
-                  type="checkbox"
-                  className="mt-0.5"
-                  checked={precisionAlignment}
-                  onChange={(e) => setPrecisionAlignment(e.target.checked)}
-                />
-                <span>
-                  <span className="font-medium block">Precision word placement (Beta)</span>
-                  <span className="text-text-muted text-xs">
-                    Anchors each phrase exactly where the original words were spoken — best
-                    lip-sync accuracy, slightly less flowing delivery. Off = smoother flow.
-                  </span>
-                </span>
-              </label>
             )}
             {mode === "tts" && (
               <p className="text-xs text-text-muted mt-2">
@@ -648,7 +666,46 @@ export function Home() {
         </section>
       )}
 
-      <section className="border border-border rounded-md p-4 space-y-3">
+      <Disclosure
+        title="Advanced options"
+        hint="Continuity, merge modes, precision placement, compression — the defaults are right for most videos"
+        badge={advancedCount}
+      >
+        <label className="flex items-start gap-2 text-sm cursor-pointer">
+          <input
+            type="checkbox"
+            className="mt-0.5"
+            checked={compressOutput}
+            onChange={(e) => setCompressOutput(e.target.checked)}
+          />
+          <span>
+            <span className="font-medium block">Compress file size</span>
+            <span className="text-text-muted text-xs">
+              Shrinks big editor exports (200 MB+ CapCut files) by re-encoding the video.
+              Off = original video quality kept untouched, bit-exact.
+            </span>
+          </span>
+        </label>
+
+        {mode === "tts" && (
+          <label className="flex items-start gap-2 text-sm cursor-pointer">
+            <input
+              type="checkbox"
+              className="mt-0.5"
+              checked={precisionAlignment}
+              onChange={(e) => setPrecisionAlignment(e.target.checked)}
+            />
+            <span>
+              <span className="font-medium block">Precision word placement (Beta)</span>
+              <span className="text-text-muted text-xs">
+                Anchors each phrase exactly where the original words were spoken — best
+                lip-sync accuracy, slightly less flowing delivery. Off = smoother flow.
+              </span>
+            </span>
+          </label>
+        )}
+
+        <div className="border-t border-border pt-4 space-y-3">
         <label className="flex items-start gap-2 text-sm cursor-pointer">
           <input
             type="checkbox"
@@ -771,9 +828,9 @@ export function Home() {
             </div>
           </div>
         )}
-      </section>
+        </div>
 
-      <section className="border border-border rounded-md p-4 space-y-3">
+        <div className="border-t border-border pt-4 space-y-3">
         <label className="flex items-start gap-2 text-sm cursor-pointer">
           <input
             type="checkbox"
@@ -838,31 +895,43 @@ export function Home() {
             )}
           </div>
         )}
-      </section>
+        </div>
 
-      {mode !== "script" && (
-        <section>
-          <label className="flex items-center gap-2 text-sm">
-            <input
-              type="checkbox"
-              checked={skipSeparation}
-              onChange={(e) => setSkipSeparation(e.target.checked)}
-            />
-            <span>Skip background separation (video has no background music)</span>
-          </label>
-        </section>
-      )}
+        {mode !== "script" && (
+          <div className="border-t border-border pt-4">
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={skipSeparation}
+                onChange={(e) => setSkipSeparation(e.target.checked)}
+              />
+              <span>Skip background separation (video has no background music)</span>
+            </label>
+          </div>
+        )}
+      </Disclosure>
 
       {error && <p className="text-sm text-danger">{error}</p>}
       {submitProgress && <p className="text-sm text-text-muted">{submitProgress}</p>}
 
-      <Button onClick={handleStart} disabled={!canStart}>
-        {isSubmitting
-          ? "Starting..."
-          : files.length > 1
-            ? `Start ${files.length} conversions`
-            : "Start conversion"}
-      </Button>
+      <div className="space-y-2">
+        <Button onClick={handleStart} disabled={!canStart} className="w-full py-3 text-base">
+          {isSubmitting
+            ? "Starting..."
+            : files.length > 1
+              ? `Start ${files.length} conversions`
+              : "Start conversion"}
+        </Button>
+        {!canStart && !isSubmitting && (
+          <p className="text-xs text-text-muted text-center">
+            {files.length === 0
+              ? "Add a video above to get started."
+              : mode === "script"
+                ? "Write the narration script to continue."
+                : "Pick a voice to continue."}
+          </p>
+        )}
+      </div>
     </div>
   );
 }
