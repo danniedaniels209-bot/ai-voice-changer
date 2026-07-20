@@ -61,11 +61,11 @@ export function StageIndicator({ stage, mode, skippedSeparation }: StageIndicato
         return (
           <li key={s} className="flex items-center gap-3 text-sm">
             <span
-              className={`w-5 h-5 rounded-full flex items-center justify-center text-xs shrink-0 ${
+              className={`w-5 h-5 rounded-full flex items-center justify-center text-xs shrink-0 transition-colors duration-300 ${
                 isDone
-                  ? "bg-success text-white"
+                  ? "bg-success/15 text-success"
                   : isCurrent
-                    ? "bg-accent text-white"
+                    ? "bg-accent text-white animate-pulse"
                     : "bg-surface border border-border text-text-muted"
               }`}
             >

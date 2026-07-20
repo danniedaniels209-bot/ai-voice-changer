@@ -39,8 +39,10 @@ export function FileDropzone({ files, onFilesSelected }: FileDropzoneProps) {
         }}
         onDragLeave={() => setIsDragOver(false)}
         onDrop={handleDrop}
-        className={`border-2 border-dashed rounded-lg p-10 text-center cursor-pointer transition-colors ${
-          isDragOver ? "border-accent bg-accent-bg" : "border-border hover:border-accent/50"
+        className={`border-2 border-dashed rounded-lg p-10 text-center cursor-pointer transition-all duration-200 ${
+          isDragOver
+            ? "border-accent bg-accent-dim scale-[1.01]"
+            : "border-border-strong hover:border-accent/60 hover:bg-surface"
         }`}
       >
         <input

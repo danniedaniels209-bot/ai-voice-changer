@@ -5,9 +5,9 @@ interface ProgressBarProps {
 export function ProgressBar({ percent }: ProgressBarProps) {
   const clamped = Math.min(100, Math.max(0, percent));
   return (
-    <div className="w-full h-2.5 bg-surface rounded-full overflow-hidden border border-border">
+    <div className="w-full h-1.5 bg-elevated rounded-full overflow-hidden">
       <div
-        className="h-full bg-accent transition-all duration-300 ease-out"
+        className="h-full bg-accent rounded-full transition-[width] duration-500 [transition-timing-function:cubic-bezier(.22,1,.36,1)]"
         style={{ width: `${clamped}%` }}
       />
     </div>
