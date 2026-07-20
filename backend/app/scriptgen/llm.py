@@ -54,11 +54,20 @@ def _get_bundle():
 
             logger.info("Loading %s (first use downloads ~6 GB)...", MODEL_ID)
             tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
-            model = AutoModelForCausalLM.from_pretrained(
-                MODEL_ID,
-                dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
-                device_map="auto" if torch.cuda.is_available() else None,
-            )
+            wanted_dtype = torch.float16 if torch.cuda.is_available() else torch.float32
+            device_map = "auto" if torch.cuda.is_available() else None
+            try:
+                # transformers >= 4.56 renamed torch_dtype -> dtype; older
+                # versions (what Colab's pinned deps install) only know
+                # torch_dtype and pass unknown kwargs into the model
+                # constructor, which raises TypeError.
+                model = AutoModelForCausalLM.from_pretrained(
+                    MODEL_ID, torch_dtype=wanted_dtype, device_map=device_map
+                )
+            except TypeError:
+                model = AutoModelForCausalLM.from_pretrained(
+                    MODEL_ID, dtype=wanted_dtype, device_map=device_map
+                )
             model.eval()
             _bundle = (tokenizer, model)
         return _bundle
