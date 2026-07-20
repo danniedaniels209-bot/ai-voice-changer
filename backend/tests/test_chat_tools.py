@@ -45,6 +45,46 @@ def test_edit_segment_updates_recipe(tmp_path, monkeypatch):
     assert saved["segments"][0]["text"] == "hello"
 
 
+def test_start_conversion_validates_inputs():
+    assert tools.execute("start_conversion", {}).startswith("Error:")
+    assert "mode must be" in tools.execute(
+        "start_conversion", {"job_id": "x", "mode": "banana"}
+    )
+    assert "Unsupported dub language" in tools.execute(
+        "start_conversion", {"job_id": "x", "mode": "tts", "dub_language": "zz"}
+    )
+
+
+def test_start_conversion_picks_default_dub_voice(monkeypatch):
+    """When dubbing without a valid dub voice, the language's first voice is used."""
+    captured = {}
+
+    def fake_start(job_id, request):
+        captured["voice"] = request.tts_voice
+        captured["dub"] = request.dub_language
+
+        class J:
+            original_filename = "clip.mp4"
+
+        return J()
+
+    import app.api.routes.convert as convert_route
+
+    monkeypatch.setattr(convert_route, "start_conversion", fake_start)
+    result = tools.execute(
+        "start_conversion", {"job_id": "j1", "mode": "tts", "dub_language": "es"}
+    )
+    assert "Conversion started" in result
+    assert captured["dub"] == "es"
+    from app.services.tts_service import DUB_VOICES
+
+    assert captured["voice"] == DUB_VOICES["es"][0][0]
+
+
+def test_get_job_status_missing_job_is_error_text():
+    assert tools.execute("get_job_status", {"job_id": "nope-123"}).startswith("Error:")
+
+
 def test_edit_segment_errors_are_text_not_exceptions(tmp_path, monkeypatch):
     from app.core.config import Paths
 

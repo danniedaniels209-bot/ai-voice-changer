@@ -45,7 +45,7 @@ class ChatMessage(BaseModel):
 
 
 class ChatRequest(BaseModel):
-    messages: list[ChatMessage] = Field(min_length=1, max_length=40)
+    messages: list[ChatMessage] = Field(min_length=1, max_length=80)
 
 
 def _chat_system() -> str:
@@ -61,7 +61,17 @@ def _chat_system() -> str:
         '<tool_call>{"tool": "tool_name", "args": {"arg": "value"}}</tool_call>\n'
         "The result comes back in the next message; then answer the user "
         "normally in plain text. Only call a tool when the user's request "
-        "needs their actual content — otherwise just answer."
+        "needs their actual content — otherwise just answer.\n\n"
+        "You can run whole conversions for the user. When they upload a video "
+        "in this chat it becomes a job (find it with list_jobs). Before "
+        "calling start_conversion, ask short clarifying questions for any "
+        "choice they haven't made yet — like an expert assistant would: "
+        "which mode (re-voice / narrate a script / voice model), which "
+        "engine ('edge' = fast cloud, 'chatterbox' = human-like local with "
+        "expressiveness 0..1), which voice or dub language. One or two "
+        "questions at a time, then act. If they already told you everything, "
+        "don't re-ask — just start it and confirm. After starting, use "
+        "get_job_status when they ask how it's going."
     )
 
 
@@ -82,7 +92,7 @@ def chat(request: ChatRequest) -> dict:
     tool_trace: list[dict] = []
     reply = ""
     for _ in range(tools.MAX_TOOL_ROUNDS + 1):
-        reply = llm.chat(messages, max_new_tokens=1500)
+        reply = llm.chat(messages, max_new_tokens=4000)
         call = tools.parse_tool_call(reply)
         if call is None or len(tool_trace) >= tools.MAX_TOOL_ROUNDS:
             break

@@ -39,7 +39,9 @@ export function Chat() {
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [uploading, setUploading] = useState<string | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -52,18 +54,15 @@ export function Chat() {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, busy]);
 
-  async function handleSend() {
-    const text = input.trim();
-    if (!text || busy) return;
+  async function sendMessage(text: string) {
     const next: DisplayMessage[] = [...messages, { role: "user", content: text }];
     setMessages(next);
-    setInput("");
     setBusy(true);
     setError(null);
     try {
       // Send only the recent turns — the model's context is finite.
       const { reply, tool_calls } = await chatWithLlm(
-        next.slice(-20).map(({ role, content }) => ({ role, content })),
+        next.slice(-40).map(({ role, content }) => ({ role, content })),
       );
       setMessages([
         ...next,
@@ -75,6 +74,32 @@ export function Chat() {
       setInput(text);
     } finally {
       setBusy(false);
+    }
+  }
+
+  function handleSend() {
+    const text = input.trim();
+    if (!text || busy) return;
+    setInput("");
+    void sendMessage(text);
+  }
+
+  async function handleAttach(file: File) {
+    setError(null);
+    setUploading(`Uploading ${file.name}… 0%`);
+    try {
+      const { uploadVideo } = await import("../api/jobs");
+      const job = await uploadVideo(file, (pct) =>
+        setUploading(`Uploading ${file.name}… ${pct.toFixed(0)}%`),
+      );
+      setUploading(null);
+      await sendMessage(
+        `I uploaded a video "${file.name}" — it's job ${job.id}. ` +
+          "Ask me what you need to know, then convert it for me.",
+      );
+    } catch (err) {
+      setUploading(null);
+      setError(err instanceof ApiError ? err.message : String(err));
     }
   }
 
@@ -110,9 +135,10 @@ export function Chat() {
       <div className="rounded-md border border-border bg-surface min-h-[320px] max-h-[55vh] overflow-y-auto p-4 space-y-3">
         {messages.length === 0 && (
           <p className="text-text-muted text-sm">
-            No messages yet. Pick an action below or just start typing. Qwen can also
-            work with your conversions — try "list my jobs", "show the transcript of my
-            last video", or "make segment 3 sound more exciting".
+            No messages yet. Attach a video with 📎 and Qwen will handle the whole
+            conversion — it asks what you want (voice, engine, language) and starts it
+            for you. Or try "list my jobs", "show my last transcript", "make segment 3
+            more exciting".
           </p>
         )}
         {messages.map((m, i) => (
@@ -155,7 +181,33 @@ export function Chat() {
         ))}
       </div>
 
+      {uploading && (
+        <div className="rounded-md border border-border bg-surface text-text-muted text-sm px-4 py-2.5 animate-pulse">
+          {uploading}
+        </div>
+      )}
+
       <div className="flex gap-2 items-end">
+        <input
+          ref={fileRef}
+          type="file"
+          accept=".mp4,.avi,.mov,.mkv,.webm"
+          className="hidden"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            if (file) void handleAttach(file);
+            e.target.value = "";
+          }}
+        />
+        <button
+          type="button"
+          title="Upload a video for the AI to convert"
+          onClick={() => fileRef.current?.click()}
+          disabled={!available || busy || uploading !== null}
+          className="shrink-0 rounded-md border border-border bg-surface px-3 py-2.5 text-sm text-text-muted hover:text-text hover:border-border-strong transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          📎
+        </button>
         <textarea
           ref={inputRef}
           value={input}
