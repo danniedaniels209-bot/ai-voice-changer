@@ -48,10 +48,6 @@ class ChatRequest(BaseModel):
     messages: list[ChatMessage] = Field(min_length=1, max_length=40)
 
 
-class ModelSelectRequest(BaseModel):
-    model: str
-
-
 _CHAT_SYSTEM = (
     "You are a helpful creative assistant inside a video voice-changer app. "
     "You help users write, rewrite, and brainstorm narration scripts, titles, "
@@ -62,23 +58,8 @@ _CHAT_SYSTEM = (
 @router.get("/status")
 def status() -> dict:
     ok, reason = llm.availability()
-    return {
-        "available": ok,
-        "reason": reason,
-        "model": llm.MODELS[llm.active_model()]["id"],
-        "active_model": llm.active_model(),
-        "models": [
-            {"key": key, "label": info["label"], "download": info["download"]}
-            for key, info in llm.MODELS.items()
-        ],
-        "actions": list(generator.ACTIONS.keys()),
-    }
-
-
-@router.post("/model")
-def select_model(request: ModelSelectRequest) -> dict:
-    llm.set_model(request.model)
-    return {"active_model": llm.active_model()}
+    return {"available": ok, "reason": reason, "model": llm.MODEL_ID,
+            "actions": list(generator.ACTIONS.keys())}
 
 
 @router.post("/chat")
