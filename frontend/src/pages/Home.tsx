@@ -274,7 +274,6 @@ export function Home() {
 
   const showVoicePicker = mode === "tts" || mode === "script" || mode === "openvoice";
   const advancedCount = [
-    compressOutput,
     mode === "tts" && precisionAlignment,
     continuity.enabled,
     chainEnabled,
@@ -304,6 +303,37 @@ export function Home() {
       <section>
         <h3 className="text-sm font-medium text-text-muted mb-2">1. Video(s)</h3>
         <FileDropzone files={files} onFilesSelected={setFiles} />
+        <div className="mt-3 grid grid-cols-2 gap-2">
+          <button
+            type="button"
+            onClick={() => setCompressOutput(false)}
+            className={`rounded-md border px-4 py-3 text-left text-sm transition-colors ${
+              !compressOutput
+                ? "border-accent bg-accent/10"
+                : "border-border bg-surface hover:border-accent/50"
+            }`}
+          >
+            <span className="font-medium block">Original quality</span>
+            <span className="text-text-muted text-xs">
+              Video untouched, bit-exact — same size as your upload.
+            </span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setCompressOutput(true)}
+            className={`rounded-md border px-4 py-3 text-left text-sm transition-colors ${
+              compressOutput
+                ? "border-accent bg-accent/10"
+                : "border-border bg-surface hover:border-accent/50"
+            }`}
+          >
+            <span className="font-medium block">Smaller file</span>
+            <span className="text-text-muted text-xs">
+              Shrinks 200 MB+ CapCut-style exports several-fold. Visually
+              identical — no quality you can see is lost.
+            </span>
+          </button>
+        </div>
       </section>
 
       <section>
@@ -668,25 +698,9 @@ export function Home() {
 
       <Disclosure
         title="Advanced options"
-        hint="Continuity, merge modes, precision placement, compression — the defaults are right for most videos"
+        hint="Continuity, merge modes, precision placement — the defaults are right for most videos"
         badge={advancedCount}
       >
-        <label className="flex items-start gap-2 text-sm cursor-pointer">
-          <input
-            type="checkbox"
-            className="mt-0.5"
-            checked={compressOutput}
-            onChange={(e) => setCompressOutput(e.target.checked)}
-          />
-          <span>
-            <span className="font-medium block">Compress file size</span>
-            <span className="text-text-muted text-xs">
-              Shrinks big editor exports (200 MB+ CapCut files) by re-encoding the video.
-              Off = original video quality kept untouched, bit-exact.
-            </span>
-          </span>
-        </label>
-
         {mode === "tts" && (
           <label className="flex items-start gap-2 text-sm cursor-pointer">
             <input

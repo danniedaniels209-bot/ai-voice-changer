@@ -181,9 +181,9 @@ class ConvertRequest(BaseModel):
     compress_output: bool = Field(
         default=False,
         description=(
-            "Re-encode the video at export (CRF 26) for a much smaller file — "
-            "useful for high-bitrate editor exports (CapCut etc. often produce "
-            "200 MB+ files). Off (default) stream-copies the video bit-exact, "
-            "keeping the original quality untouched."
+            "Re-encode the video at export (CRF 23, visually transparent) for "
+            "a much smaller file — useful for high-bitrate editor exports "
+            "(CapCut etc. often produce 200 MB+ files). Off (default) "
+            "stream-copies the video bit-exact."
         ),
     )

@@ -16,23 +16,35 @@ export async function uploadVideo(
     return apiUpload<Job>("/upload", formData, onProgress);
   }
 
-  const uploadId = crypto.randomUUID();
+  // Tunnel connections drop mid-transfer sometimes; a failed chunk voids the
+  // server-side part file, so on any failure we restart the whole upload
+  // once with a fresh id before giving up.
   const totalChunks = Math.ceil(video.size / CHUNK_SIZE);
-  for (let i = 0; i < totalChunks; i++) {
-    const part = video.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
-    const formData = new FormData();
-    formData.append("upload_id", uploadId);
-    formData.append("index", String(i));
-    formData.append("chunk", part, video.name);
-    await apiUpload<{ received: number }>("/upload/chunk", formData, (pct) => {
-      if (onProgress) onProgress(((i + pct / 100) / totalChunks) * 100);
-    });
+  let lastError: unknown = null;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const uploadId = crypto.randomUUID();
+    try {
+      for (let i = 0; i < totalChunks; i++) {
+        const part = video.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
+        const formData = new FormData();
+        formData.append("upload_id", uploadId);
+        formData.append("index", String(i));
+        formData.append("chunk", part, video.name);
+        await apiUpload<{ received: number }>("/upload/chunk", formData, (pct) => {
+          if (onProgress) onProgress(((i + pct / 100) / totalChunks) * 100);
+        });
+      }
+      return await apiPost<Job>("/upload/finalize", {
+        upload_id: uploadId,
+        filename: video.name,
+        total_chunks: totalChunks,
+      });
+    } catch (err) {
+      lastError = err;
+      if (onProgress) onProgress(0);
+    }
   }
-  return apiPost<Job>("/upload/finalize", {
-    upload_id: uploadId,
-    filename: video.name,
-    total_chunks: totalChunks,
-  });
+  throw lastError;
 }
 
 export function getJob(jobId: string): Promise<Job> {

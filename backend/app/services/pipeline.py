@@ -572,16 +572,17 @@ def finalize_export(
     quality_presets = _export_quality_presets()
     preset = quality_presets.get(app_settings.export_quality, quality_presets["high"])
 
-    # Compress mode re-encodes the video at CRF 26 (or the preset's CRF if
-    # it's already smaller-file than that) instead of stream-copying the
-    # source — phone/CapCut exports often carry 8-16 Mbps the content
-    # doesn't need. Opt-in per job; off = bit-exact video.
+    # Compress mode re-encodes the video at CRF 23 (visually transparent for
+    # typical content) instead of stream-copying the source — phone/CapCut
+    # exports often carry 8-16 Mbps the content doesn't need, so this shrinks
+    # files several-fold with no visible quality loss. Opt-in per job;
+    # off = bit-exact video.
     video_crf = preset["video_crf"]
     if compress:
-        video_crf = str(max(int(video_crf), 26))
+        video_crf = str(max(int(video_crf), 23))
         job_manager.append_log(
             job_id, "Compressing file size: re-encoding video (CRF "
-            f"{video_crf}) — expect a much smaller export."
+            f"{video_crf}, visually lossless) — expect a much smaller export."
         )
 
     export_dir = get_effective_export_dir()
