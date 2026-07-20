@@ -242,12 +242,22 @@ export function Home() {
 
   return (
     <div className="space-y-8">
-      <div>
-        <h2 className="text-xl font-semibold mb-1">Create a voiced video</h2>
-        <p className="text-text-muted text-sm">
-          Upload one or more videos, choose how the voice should work, and convert. Background
-          music and effects are preserved.
-        </p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h2 className="text-xl font-semibold mb-1">Create a voiced video</h2>
+          <p className="text-text-muted text-sm">
+            Upload one or more videos, choose how the voice should work, and convert. Background
+            music and effects are preserved.
+          </p>
+        </div>
+        <div className="flex gap-2 shrink-0">
+          <Button variant="secondary" onClick={() => navigate("/chat")}>
+            Use Qwen (AI Chat)
+          </Button>
+          <Button variant="secondary" onClick={() => navigate("/studio")}>
+            Script Studio
+          </Button>
+        </div>
       </div>
 
       <section>

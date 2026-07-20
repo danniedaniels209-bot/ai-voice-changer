@@ -7,15 +7,36 @@ export interface GenSettings {
   tone: string;
 }
 
+export interface LlmModelInfo {
+  key: string;
+  label: string;
+  download: string;
+}
+
 export interface ScriptgenStatus {
   available: boolean;
   reason: string;
   model: string;
+  active_model?: string;
+  models?: LlmModelInfo[];
   actions: string[];
+}
+
+export interface ChatMessage {
+  role: "user" | "assistant";
+  content: string;
 }
 
 export function scriptgenStatus(): Promise<ScriptgenStatus> {
   return apiGet<ScriptgenStatus>("/scriptgen/status");
+}
+
+export function selectLlmModel(model: string): Promise<{ active_model: string }> {
+  return apiPost<{ active_model: string }>("/scriptgen/model", { model });
+}
+
+export function chatWithLlm(messages: ChatMessage[]): Promise<{ reply: string }> {
+  return apiPost<{ reply: string }>("/scriptgen/chat", { messages });
 }
 
 export function generateOutline(topic: string, settings: GenSettings): Promise<{ outline: string[] }> {
