@@ -65,6 +65,34 @@ def test_stale_chunk_parts_deleted(tmp_path, monkeypatch):
     assert fresh.exists()
 
 
+def test_old_exports_deleted_fresh_kept(tmp_path, monkeypatch):
+    from app.core.config import Paths
+
+    monkeypatch.setattr(Paths, "exports", tmp_path)
+    old_file = tmp_path / "video_converted.mp4"
+    old_file.write_bytes(b"v")
+    stamp = time.time() - 3 * 3600
+    os.utime(old_file, (stamp, stamp))
+    fresh_file = tmp_path / "new_converted.mp4"
+    fresh_file.write_bytes(b"v")
+
+    removed = cleanup.prune_expired_exports(ttl_minutes=120)
+    assert removed == 1
+    assert not old_file.exists()
+    assert fresh_file.exists()
+
+
+def test_strip_thinking_never_returns_empty():
+    from app.scriptgen import llm
+
+    assert llm._strip_thinking("<think>reason</think>Answer.") == "Answer."
+    # Whole reply inside an unclosed think block -> content kept, not dropped
+    assert llm._strip_thinking("<think>only reasoning, no close tag") == (
+        "only reasoning, no close tag"
+    )
+    assert llm._strip_thinking("Before<think>dangling") == "Before"
+
+
 def test_sweeper_only_starts_on_cloud(monkeypatch):
     import threading
 

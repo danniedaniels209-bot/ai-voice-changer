@@ -145,13 +145,23 @@ def _get_bundle():
 
 
 def _strip_thinking(text: str) -> str:
-    """Qwen3 emits <think>…</think> reasoning before the answer — drop it
-    (and a dangling unclosed block) so users only see the reply."""
+    """Some models (Qwen3, sometimes Hermes) emit <think>…</think> reasoning
+    before the answer — drop the reasoning but NEVER return an empty reply:
+    if stripping would erase everything (e.g. the model spent its whole
+    output inside an unclosed think block), fall back to the block's content
+    so the user still gets an answer."""
     import re
 
-    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
-    text = re.sub(r"<think>.*", "", text, flags=re.DOTALL)
-    return text.strip()
+    cleaned = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
+    if "<think>" in cleaned:
+        # Unclosed block: keep whatever came before it.
+        cleaned = cleaned.split("<think>", 1)[0]
+    cleaned = cleaned.strip()
+    if cleaned:
+        return cleaned
+    # Everything was inside think tags — better to show the content than nothing.
+    inner = re.sub(r"</?think>", "", text, flags=re.DOTALL).strip()
+    return inner
 
 
 def _run(messages: list[dict], max_new_tokens: int) -> str:

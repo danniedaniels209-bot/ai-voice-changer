@@ -163,7 +163,15 @@ def chat(request: ChatRequest) -> dict:
                        "(or call another tool if needed).",
         })
 
-    return {"reply": tools.strip_tool_call(reply) or reply, "tool_calls": tool_trace}
+    final = tools.strip_tool_call(reply) or reply.strip()
+    if not final:
+        # Model burned its whole turn on reasoning/tool syntax — never send
+        # an empty bubble back to the UI.
+        final = (
+            "(The model returned an empty reply — please try again or "
+            "switch models above.)"
+        )
+    return {"reply": final, "tool_calls": tool_trace}
 
 
 @router.post("/outline")
