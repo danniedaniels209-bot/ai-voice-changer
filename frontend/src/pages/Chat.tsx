@@ -42,6 +42,7 @@ export function Chat() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [uploading, setUploading] = useState<string | null>(null);
+  const [compressUpload, setCompressUpload] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -99,6 +100,9 @@ export function Chat() {
       setUploading(null);
       await sendMessage(
         `I uploaded a video "${file.name}" — it's job ${job.id}. ` +
+          (compressUpload
+            ? "I want a smaller export file, so use compress=true when you start the conversion. "
+            : "Keep the original video quality (compress=false). ") +
           "Ask me what you need to know, then convert it for me.",
       );
     } catch (err) {
@@ -220,6 +224,33 @@ export function Chat() {
           {uploading}
         </div>
       )}
+
+      <div className="flex items-center gap-2 text-xs">
+        <span className="text-text-muted">Uploads export as:</span>
+        <button
+          type="button"
+          onClick={() => setCompressUpload(false)}
+          className={`rounded-full border px-3 py-1 transition-colors ${
+            !compressUpload
+              ? "border-accent bg-accent/10 text-text"
+              : "border-border bg-surface text-text-muted hover:border-accent/50"
+          }`}
+        >
+          Original quality
+        </button>
+        <button
+          type="button"
+          onClick={() => setCompressUpload(true)}
+          title="Shrinks big CapCut-style exports several-fold — visually identical"
+          className={`rounded-full border px-3 py-1 transition-colors ${
+            compressUpload
+              ? "border-accent bg-accent/10 text-text"
+              : "border-border bg-surface text-text-muted hover:border-accent/50"
+          }`}
+        >
+          Smaller file
+        </button>
+      </div>
 
       <div className="flex gap-2 items-end">
         <input
