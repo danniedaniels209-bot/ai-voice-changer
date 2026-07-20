@@ -102,10 +102,11 @@ def create_app() -> FastAPI:
 
     @app.on_event("startup")
     def on_startup() -> None:
-        from app.utils.cleanup import prune_stale_temp_dirs
+        from app.utils.cleanup import prune_stale_temp_dirs, start_upload_sweeper
 
         Paths.ensure_all()
         prune_stale_temp_dirs()
+        start_upload_sweeper()
         hardware = get_hardware_info(settings.default_device_mode)
         ffmpeg_path = settings.resolve_ffmpeg_path()
 
