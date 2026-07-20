@@ -110,11 +110,30 @@ def _chat_system() -> str:
     )
 
 
+class ModelSelectRequest(BaseModel):
+    model: str
+
+
 @router.get("/status")
 def status() -> dict:
     ok, reason = llm.availability()
-    return {"available": ok, "reason": reason, "model": llm.MODEL_ID,
-            "actions": list(generator.ACTIONS.keys())}
+    return {
+        "available": ok,
+        "reason": reason,
+        "model": llm.MODELS[llm.active_model()]["id"],
+        "active_model": llm.active_model(),
+        "models": [
+            {"key": key, "label": info["label"], "download": info["download"]}
+            for key, info in llm.MODELS.items()
+        ],
+        "actions": list(generator.ACTIONS.keys()),
+    }
+
+
+@router.post("/model")
+def select_model(request: ModelSelectRequest) -> dict:
+    llm.set_model(request.model)
+    return {"active_model": llm.active_model()}
 
 
 @router.post("/chat")

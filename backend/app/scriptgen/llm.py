@@ -18,12 +18,63 @@ from app.core.logging import get_logger
 
 logger = get_logger(__name__)
 
-# Default fits a free T4 alongside the other models; override with
-# AVC_LLM_MODEL (e.g. Qwen/Qwen2.5-7B-Instruct on a bigger GPU).
-MODEL_ID = os.environ.get("AVC_LLM_MODEL", "Qwen/Qwen2.5-3B-Instruct")
+MODELS: dict[str, dict] = {
+    "qwen": {
+        "id": os.environ.get("AVC_LLM_MODEL", "Qwen/Qwen2.5-3B-Instruct"),
+        "label": "Qwen2.5 3B (fast, default)",
+        "download": "~6 GB",
+        "quant4": False,
+    },
+    "qwen3-8b": {
+        "id": "Qwen/Qwen3-8B",
+        "label": "Qwen3 8B (smartest, 4-bit)",
+        "download": "~5.5 GB in 4-bit",
+        "quant4": True,  # fp16 would need ~16 GB — 4-bit fits a T4
+    },
+    "hermes3": {
+        "id": "NousResearch/Hermes-3-Llama-3.2-3B",
+        "label": "Hermes 3 (Llama 3.2 3B)",
+        "download": "~6 GB",
+        "quant4": False,
+    },
+}
+DEFAULT_MODEL = "qwen"
+
+# Kept for backward compatibility (status endpoint, logs).
+MODEL_ID = MODELS[DEFAULT_MODEL]["id"]
 
 _lock = threading.Lock()
-_bundle = None  # (tokenizer, model)
+_active_key = DEFAULT_MODEL
+_bundle = None  # (tokenizer, model) for _active_key
+
+
+def active_model() -> str:
+    return _active_key
+
+
+def set_model(key: str) -> None:
+    """Select the model generate()/chat() use. Frees the old model's VRAM so
+    a T4 never holds two LLMs; the new one loads lazily on next use."""
+    global _active_key, _bundle
+    if key not in MODELS:
+        raise AppError(f"Unknown model '{key}'. Available: {', '.join(MODELS)}")
+    with _lock:
+        if key == _active_key:
+            return
+        _active_key = key
+        if _bundle is not None:
+            _bundle = None
+            try:
+                import gc
+
+                import torch
+
+                gc.collect()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+            except ImportError:
+                pass
+        logger.info("LLM switched to %s (%s)", key, MODELS[key]["id"])
 
 
 def availability() -> tuple[bool, str]:
@@ -52,32 +103,70 @@ def _get_bundle():
             import torch
             from transformers import AutoModelForCausalLM, AutoTokenizer
 
-            logger.info("Loading %s (first use downloads ~6 GB)...", MODEL_ID)
-            tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
+            info = MODELS[_active_key]
+            model_id = info["id"]
+            logger.info(
+                "Loading %s (first use downloads %s)...", model_id, info["download"]
+            )
+            tokenizer = AutoTokenizer.from_pretrained(model_id)
             wanted_dtype = torch.float16 if torch.cuda.is_available() else torch.float32
             device_map = "auto" if torch.cuda.is_available() else None
+
+            kwargs: dict = {"device_map": device_map}
+            if info["quant4"] and torch.cuda.is_available():
+                try:
+                    from transformers import BitsAndBytesConfig
+
+                    kwargs["quantization_config"] = BitsAndBytesConfig(
+                        load_in_4bit=True,
+                        bnb_4bit_compute_dtype=torch.float16,
+                        bnb_4bit_quant_type="nf4",
+                    )
+                except ImportError:
+                    logger.warning(
+                        "bitsandbytes unavailable — loading %s at fp16 (needs a big GPU)",
+                        model_id,
+                    )
             try:
                 # transformers >= 4.56 renamed torch_dtype -> dtype; older
                 # versions (what Colab's pinned deps install) only know
                 # torch_dtype and pass unknown kwargs into the model
                 # constructor, which raises TypeError.
                 model = AutoModelForCausalLM.from_pretrained(
-                    MODEL_ID, torch_dtype=wanted_dtype, device_map=device_map
+                    model_id, torch_dtype=wanted_dtype, **kwargs
                 )
             except TypeError:
                 model = AutoModelForCausalLM.from_pretrained(
-                    MODEL_ID, dtype=wanted_dtype, device_map=device_map
+                    model_id, dtype=wanted_dtype, **kwargs
                 )
             model.eval()
             _bundle = (tokenizer, model)
         return _bundle
 
 
+def _strip_thinking(text: str) -> str:
+    """Qwen3 emits <think>…</think> reasoning before the answer — drop it
+    (and a dangling unclosed block) so users only see the reply."""
+    import re
+
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
+    text = re.sub(r"<think>.*", "", text, flags=re.DOTALL)
+    return text.strip()
+
+
 def _run(messages: list[dict], max_new_tokens: int) -> str:
     import torch
 
     tokenizer, model = _get_bundle()
-    prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+    try:
+        # Qwen3 supports disabling its thinking mode at the template level.
+        prompt = tokenizer.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=True, enable_thinking=False
+        )
+    except TypeError:
+        prompt = tokenizer.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=True
+        )
     inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
 
     # Serialized: a 3B model on a T4 is fast enough that queueing beats the
@@ -92,7 +181,7 @@ def _run(messages: list[dict], max_new_tokens: int) -> str:
             pad_token_id=tokenizer.eos_token_id,
         )
     text = tokenizer.decode(output[0][inputs["input_ids"].shape[1]:], skip_special_tokens=True)
-    return text.strip()
+    return _strip_thinking(text)
 
 
 def generate(system: str, user: str, max_new_tokens: int = 1024) -> str:

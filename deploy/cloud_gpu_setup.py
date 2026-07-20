@@ -74,7 +74,7 @@ def main() -> None:
     run([sys.executable, "-m", "pip", "install", "-q", "-r", str(BACKEND / "requirements-cloud.txt")])
     run([sys.executable, "-m", "pip", "install", "-q",
          "resemble-perth", "s3tokenizer", "conformer", "diffusers", "wordfreq",
-         "accelerate", "python-docx"])
+         "accelerate", "python-docx", "bitsandbytes"])
 
     # 3. Tunnel client (cloudflared — no account needed)
     tunnel_bin = Path("/tmp/cloudflared")

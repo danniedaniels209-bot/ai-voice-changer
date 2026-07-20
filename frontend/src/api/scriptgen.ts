@@ -7,11 +7,23 @@ export interface GenSettings {
   tone: string;
 }
 
+export interface LlmModelInfo {
+  key: string;
+  label: string;
+  download: string;
+}
+
 export interface ScriptgenStatus {
   available: boolean;
   reason: string;
   model: string;
+  active_model?: string;
+  models?: LlmModelInfo[];
   actions: string[];
+}
+
+export function selectLlmModel(model: string): Promise<{ active_model: string }> {
+  return apiPost<{ active_model: string }>("/scriptgen/model", { model });
 }
 
 export interface ChatMessage {

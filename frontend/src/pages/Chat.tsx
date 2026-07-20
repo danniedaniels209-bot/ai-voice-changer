@@ -3,6 +3,7 @@ import { Button } from "../components/Button";
 import {
   chatWithLlm,
   scriptgenStatus,
+  selectLlmModel,
   type ChatMessage,
   type ScriptgenStatus,
 } from "../api/scriptgen";
@@ -35,6 +36,7 @@ type DisplayMessage = ChatMessage & { tools?: string[] };
 
 export function Chat() {
   const [status, setStatus] = useState<ScriptgenStatus | null>(null);
+  const [model, setModel] = useState("qwen");
   const [messages, setMessages] = useState<DisplayMessage[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
@@ -46,7 +48,10 @@ export function Chat() {
 
   useEffect(() => {
     scriptgenStatus()
-      .then(setStatus)
+      .then((s) => {
+        setStatus(s);
+        if (s.active_model) setModel(s.active_model);
+      })
       .catch(() => setStatus(null));
   }, []);
 
@@ -109,15 +114,45 @@ export function Chat() {
     inputRef.current?.focus();
   }
 
+  async function handleModelChange(key: string) {
+    setModel(key);
+    setError(null);
+    try {
+      await selectLlmModel(key);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : String(err));
+    }
+  }
+
   const available = status?.available ?? false;
+  const models = status?.models ?? [];
 
   return (
     <div className="space-y-4">
-      <div>
-        <h2 className="text-xl font-semibold mb-1">AI Chat</h2>
-        <p className="text-text-muted text-sm">
-          Chat with Qwen — brainstorm, rewrite, or generate anything for your videos.
-        </p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h2 className="text-xl font-semibold mb-1">AI Chat</h2>
+          <p className="text-text-muted text-sm">
+            Your AI assistant — it can convert videos, edit narration, and write anything.
+          </p>
+        </div>
+        {models.length > 0 && (
+          <label className="text-sm shrink-0">
+            <div className="text-text-muted mb-1 text-xs">Model</div>
+            <select
+              value={model}
+              onChange={(e) => handleModelChange(e.target.value)}
+              disabled={busy}
+              className="bg-surface border border-border rounded-md px-3 py-2"
+            >
+              {models.map((m) => (
+                <option key={m.key} value={m.key}>
+                  {m.label} — {m.download}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
       </div>
 
       {status && !available && (
