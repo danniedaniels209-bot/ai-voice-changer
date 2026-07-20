@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { FileDropzone } from "../components/FileDropzone";
 import { Button } from "../components/Button";
 import { listModels } from "../api/models";
-import { listVoices, listCustomVoices } from "../api/voices";
+import { listVoices, listCustomVoices, listDubLanguages } from "../api/voices";
 import { getSettings } from "../api/settings";
 import { uploadVideo, startConversion } from "../api/jobs";
 import { ApiError, API_BASE_URL, TUNNEL_ACTIVE } from "../api/client";
@@ -15,6 +15,7 @@ import {
   type ConversionMode,
   type RVCModelInfo,
   type VoiceConversionParams,
+  type DubLanguage,
   type NarrationEngine,
   type VoiceInfo,
   type VoiceStyle,
@@ -83,6 +84,9 @@ export function Home() {
   const [script, setScript] = useState("");
   const [skipSeparation, setSkipSeparation] = useState(false);
   const [precisionAlignment, setPrecisionAlignment] = useState(false);
+  const [dubLanguages, setDubLanguages] = useState<DubLanguage[]>([]);
+  const [dubLanguage, setDubLanguage] = useState<string>("");
+  const [dubVoice, setDubVoice] = useState<string>("");
   const [voiceStyle, setVoiceStyle] = useState<VoiceStyle>("standard");
   const [params, setParams] = useState<VoiceConversionParams>(DEFAULT_VOICE_PARAMS);
   const [activePreset, setActivePreset] = useState<string | null>(null);
@@ -123,6 +127,10 @@ export function Home() {
         }
       })
       .catch((err) => setVoicesError(err instanceof ApiError ? err.message : String(err)));
+
+    listDubLanguages()
+      .then((r) => setDubLanguages(r.languages))
+      .catch(() => {});
 
     getSettings()
       .then((s) => {
@@ -195,9 +203,13 @@ export function Home() {
         await startConversion(job.id, {
           mode,
           model_name: mode === "rvc" ? selectedModel : null,
-          tts_voice: selectedVoice || "en-US-GuyNeural",
+          tts_voice:
+            mode === "tts" && dubLanguage && dubVoice
+              ? dubVoice
+              : selectedVoice || "en-US-GuyNeural",
           script: mode === "script" ? script : null,
           continuity,
+          dub_language: mode === "tts" && dubLanguage ? dubLanguage : null,
           precision_alignment: mode === "tts" ? precisionAlignment : false,
           narration_engine: narrationEngine,
           exaggeration,
@@ -366,6 +378,42 @@ export function Home() {
                   className="w-full"
                 />
               </label>
+            )}
+            {mode === "tts" && dubLanguages.length > 0 && (
+              <div className="mt-3 grid grid-cols-2 gap-3">
+                <label className="text-sm">
+                  <div className="text-text-muted mb-1">Dub into another language (needs GPU session)</div>
+                  <select
+                    value={dubLanguage}
+                    onChange={(e) => {
+                      const code = e.target.value;
+                      setDubLanguage(code);
+                      const lang = dubLanguages.find((l) => l.code === code);
+                      setDubVoice(lang?.voices[0]?.id ?? "");
+                    }}
+                    className="w-full bg-surface border border-border rounded-md px-3 py-2"
+                  >
+                    <option value="">No - keep English</option>
+                    {dubLanguages.map((l) => (
+                      <option key={l.code} value={l.code}>{l.name}</option>
+                    ))}
+                  </select>
+                </label>
+                {dubLanguage && (
+                  <label className="text-sm">
+                    <div className="text-text-muted mb-1">Dubbing voice</div>
+                    <select
+                      value={dubVoice}
+                      onChange={(e) => setDubVoice(e.target.value)}
+                      className="w-full bg-surface border border-border rounded-md px-3 py-2"
+                    >
+                      {(dubLanguages.find((l) => l.code === dubLanguage)?.voices ?? []).map((v) => (
+                        <option key={v.id} value={v.id}>{v.label}</option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+              </div>
             )}
             {mode === "tts" && (
               <label className="flex items-start gap-2 mt-3 text-sm cursor-pointer">

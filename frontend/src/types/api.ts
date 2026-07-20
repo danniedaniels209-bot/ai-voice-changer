@@ -167,6 +167,7 @@ export interface ConvertRequest {
   script: string | null;
   chain: ChainStage | null;
   continuity: ContinuitySettings;
+  dub_language: string | null;
   precision_alignment: boolean;
   narration_engine: NarrationEngine;
   exaggeration: number;
@@ -211,4 +212,10 @@ export interface JobSegmentsResponse {
   engine?: string;
   voice?: string;
   segments: JobSegment[];
+}
+
+export interface DubLanguage {
+  code: string;
+  name: string;
+  voices: { id: string; label: string }[];
 }

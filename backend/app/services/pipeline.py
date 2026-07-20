@@ -70,6 +70,7 @@ def run_pipeline(
     exaggeration: float = 0.5,
     continuity=None,
     precision: bool = False,
+    dub_language: str | None = None,
 ) -> None:
     """Entry point for the worker pool task submitted by POST /convert."""
     try:
@@ -145,7 +146,7 @@ def run_pipeline(
         elif mode == "tts":
             subtitle_cues, plan_segments = _run_tts_stages(
                 job_id, job, voice_path, converted_voice_path, job_dir, tts_voice, device,
-                narration_engine, exaggeration, continuity, precision,
+                narration_engine, exaggeration, continuity, precision, dub_language,
             )
         elif mode == "openvoice":
             from app.services import expressive_service
@@ -313,6 +314,7 @@ def _run_tts_stages(
     exaggeration: float = 0.5,
     continuity=None,
     precision: bool = False,
+    dub_language: str | None = None,
 ) -> tuple[list, list]:
     """
     TTS mode: transcribe the (separated) speech locally with Whisper, then
@@ -343,6 +345,21 @@ def _run_tts_stages(
                 f"Context recognition: protected/normalized {len(decisions)} "
                 "technical term(s) (timestamps unchanged).",
             )
+
+    if dub_language:
+        # Translation dubbing: translate AFTER context recognition (so tech
+        # terms are already protected) and BEFORE precision splitting/merging
+        # (translated text has no word timestamps, so precision falls back
+        # to segment-level anchoring, which is still exact per segment).
+        from app.services import translation_service
+
+        job_manager.append_log(
+            job_id,
+            "Translating transcript into "
+            + translation_service.LANGUAGES.get(dub_language, dub_language) + "...",
+        )
+        segments = translation_service.translate_segments(segments, dub_language)
+        job_manager.append_log(job_id, "Translation complete.")
 
     if precision:
         # Precision word placement: split into word-anchored phrases and

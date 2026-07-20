@@ -67,6 +67,20 @@ def start_conversion(job_id: str, request: ConvertRequest) -> Job:
                     "'Human-like (local)' engine to use them.",
                     details={"field": "narration_engine"},
                 )
+        elif request.dub_language and request.mode == "tts":
+            from app.services.translation_service import LANGUAGES
+
+            if request.dub_language not in LANGUAGES:
+                raise AppError(
+                    f"Unsupported dubbing language '{request.dub_language}'.",
+                    details={"field": "dub_language"},
+                )
+            if not tts_service.is_dub_voice(request.tts_voice, request.dub_language):
+                raise AppError(
+                    f"Voice '{request.tts_voice}' does not speak "
+                    f"{LANGUAGES[request.dub_language]} - pick one from GET /voices/dub.",
+                    details={"field": "tts_voice"},
+                )
         elif not tts_service.is_known_voice(request.tts_voice):
             raise AppError(
                 f"Unknown TTS voice '{request.tts_voice}'. See GET /voices for options.",
@@ -120,6 +134,10 @@ def start_conversion(job_id: str, request: ConvertRequest) -> Job:
             summary["Expressiveness"] = f"{request.exaggeration:.2f}"
     if request.precision_alignment and request.mode == "tts":
         summary["Word placement"] = "precision"
+    if request.dub_language and request.mode == "tts":
+        from app.services.translation_service import LANGUAGES as _L
+
+        summary["Dubbed into"] = _L.get(request.dub_language, request.dub_language)
     if request.continuity and request.continuity.enabled:
         summary["Natural continuity"] = (
             f"on (stability {request.continuity.voice_stability}, "
@@ -154,6 +172,7 @@ def start_conversion(job_id: str, request: ConvertRequest) -> Job:
         request.exaggeration,
         request.continuity,
         request.precision_alignment,
+        request.dub_language,
     )
     return claimed
 

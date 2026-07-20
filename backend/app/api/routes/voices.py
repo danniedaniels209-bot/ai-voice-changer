@@ -42,6 +42,24 @@ class CustomVoiceInfo(BaseModel):
     size_mb: float
 
 
+@router.get("/voices/dub")
+def list_dub_voices() -> dict:
+    """Languages + voices available for translation dubbing."""
+    from app.services.translation_service import LANGUAGES
+    from app.services.tts_service import DUB_VOICES
+
+    return {
+        "languages": [
+            {
+                "code": code,
+                "name": LANGUAGES[code],
+                "voices": [{"id": v, "label": l} for v, l in DUB_VOICES.get(code, [])],
+            }
+            for code in LANGUAGES
+        ]
+    }
+
+
 @router.get("/voices/custom", response_model=list[CustomVoiceInfo])
 def list_custom_voices() -> list[CustomVoiceInfo]:
     from app.utils import custom_voices

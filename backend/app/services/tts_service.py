@@ -74,6 +74,24 @@ CURATED_VOICES: list[TTSVoice] = [
 
 DEFAULT_VOICE = "en-US-GuyNeural"
 
+# Dubbing voices: per-language edge-tts narrators (male, female).
+DUB_VOICES: dict[str, list[tuple[str, str]]] = {
+    "es": [("es-ES-AlvaroNeural", "Alvaro - Spanish male"), ("es-ES-ElviraNeural", "Elvira - Spanish female")],
+    "fr": [("fr-FR-HenriNeural", "Henri - French male"), ("fr-FR-DeniseNeural", "Denise - French female")],
+    "de": [("de-DE-ConradNeural", "Conrad - German male"), ("de-DE-KatjaNeural", "Katja - German female")],
+    "pt": [("pt-BR-AntonioNeural", "Antonio - Brazilian male"), ("pt-BR-FranciscaNeural", "Francisca - Brazilian female")],
+    "hi": [("hi-IN-MadhurNeural", "Madhur - Hindi male"), ("hi-IN-SwaraNeural", "Swara - Hindi female")],
+    "it": [("it-IT-DiegoNeural", "Diego - Italian male"), ("it-IT-ElsaNeural", "Elsa - Italian female")],
+    "ja": [("ja-JP-KeitaNeural", "Keita - Japanese male"), ("ja-JP-NanamiNeural", "Nanami - Japanese female")],
+    "ko": [("ko-KR-InJoonNeural", "InJoon - Korean male"), ("ko-KR-SunHiNeural", "SunHi - Korean female")],
+    "ar": [("ar-SA-HamedNeural", "Hamed - Arabic male"), ("ar-SA-ZariyahNeural", "Zariyah - Arabic female")],
+    "ru": [("ru-RU-DmitryNeural", "Dmitry - Russian male"), ("ru-RU-SvetlanaNeural", "Svetlana - Russian female")],
+}
+
+
+def is_dub_voice(voice_id: str, lang: str) -> bool:
+    return any(v == voice_id for v, _ in DUB_VOICES.get(lang, []))
+
 
 def is_known_voice(voice_id: str) -> bool:
     return any(v.id == voice_id for v in CURATED_VOICES)

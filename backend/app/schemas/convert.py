@@ -139,6 +139,15 @@ class ConvertRequest(BaseModel):
         default_factory=ContinuitySettings,
         description="Natural-continuity processing (off by default).",
     )
+    dub_language: str | None = Field(
+        default=None,
+        description=(
+            "Translation dubbing (tts mode): translate the transcript into "
+            "this language code (es/fr/de/pt/hi/it/ja/ko/ar/ru) and narrate "
+            "it with a matching voice. Needs a GPU session (uses the local "
+            "LLM for translation). None = no translation."
+        ),
+    )
     precision_alignment: bool = Field(
         default=False,
         description=(

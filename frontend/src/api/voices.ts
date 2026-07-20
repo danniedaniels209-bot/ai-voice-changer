@@ -1,5 +1,5 @@
 import { apiGet, apiUpload, apiDelete } from "./client";
-import type { CustomVoiceInfo, VoiceInfo } from "../types/api";
+import type { CustomVoiceInfo, DubLanguage, VoiceInfo } from "../types/api";
 
 export function listVoices(): Promise<VoiceInfo[]> {
   return apiGet<VoiceInfo[]>("/voices");
@@ -18,4 +18,8 @@ export function uploadCustomVoice(name: string, sample: File): Promise<CustomVoi
 
 export function deleteCustomVoice(name: string): Promise<{ deleted: string }> {
   return apiDelete<{ deleted: string }>(`/voices/custom/${encodeURIComponent(name)}`);
+}
+
+export function listDubLanguages(): Promise<{ languages: DubLanguage[] }> {
+  return apiGet<{ languages: DubLanguage[] }>("/voices/dub");
 }
