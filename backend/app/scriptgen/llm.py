@@ -21,15 +21,27 @@ logger = get_logger(__name__)
 MODELS: dict[str, dict] = {
     "qwen": {
         "id": os.environ.get("AVC_LLM_MODEL", "Qwen/Qwen2.5-3B-Instruct"),
-        "label": "Qwen2.5 3B (fast, default)",
+        "label": "Qwen2.5 3B (fastest)",
         "download": "~6 GB",
         "quant4": False,
+    },
+    "qwen7b": {
+        "id": "Qwen/Qwen2.5-7B-Instruct",
+        "label": "Qwen2.5 7B (best all-round, 4-bit)",
+        "download": "~5 GB in 4-bit",
+        "quant4": True,
     },
     "qwen3-8b": {
         "id": "Qwen/Qwen3-8B",
         "label": "Qwen3 8B (smartest, 4-bit)",
         "download": "~5.5 GB in 4-bit",
         "quant4": True,  # fp16 would need ~16 GB — 4-bit fits a T4
+    },
+    "hermes8b": {
+        "id": "NousResearch/Hermes-3-Llama-3.1-8B",
+        "label": "Hermes 3 8B (agentic, 4-bit)",
+        "download": "~5.5 GB in 4-bit",
+        "quant4": True,
     },
     "xlam-7b": {
         "id": "Salesforce/xLAM-7b-r",
@@ -38,6 +50,7 @@ MODELS: dict[str, dict] = {
         "quant4": True,  # 7B fp16 (~14 GB) leaves no room for the pipeline models
     },
 }
+# All models are ungated (no Hugging Face login needed) and download freely.
 DEFAULT_MODEL = "qwen"
 
 # Kept for backward compatibility (status endpoint, logs).
@@ -52,15 +65,40 @@ def active_model() -> str:
     return _active_key
 
 
+def _delete_model_cache(model_id: str) -> None:
+    """Delete a model's downloaded weights from the Hugging Face cache.
+    Cloud sessions have a small disk, so keeping only the selected model on
+    disk lets the picker offer many models without ever filling up."""
+    try:
+        from huggingface_hub import scan_cache_dir
+
+        cache = scan_cache_dir()
+        revisions = [
+            rev.commit_hash
+            for repo in cache.repos
+            if repo.repo_id == model_id
+            for rev in repo.revisions
+        ]
+        if revisions:
+            cache.delete_revisions(*revisions).execute()
+            logger.info("Freed disk: removed cached weights for %s", model_id)
+    except Exception as exc:  # noqa: BLE001 — best-effort housekeeping
+        logger.warning("Could not delete cache for %s: %s", model_id, exc)
+
+
 def set_model(key: str) -> None:
     """Select the model generate()/chat() use. Frees the old model's VRAM so
-    a T4 never holds two LLMs; the new one loads lazily on next use."""
+    a T4 never holds two LLMs; the new one loads lazily on next use. On cloud
+    sessions the old model's downloaded weights are also deleted from disk so
+    only one model is ever stored — the picker can offer many without filling
+    the session disk."""
     global _active_key, _bundle
     if key not in MODELS:
         raise AppError(f"Unknown model '{key}'. Available: {', '.join(MODELS)}")
     with _lock:
         if key == _active_key:
             return
+        old_id = MODELS[_active_key]["id"]
         _active_key = key
         if _bundle is not None:
             _bundle = None
@@ -75,6 +113,10 @@ def set_model(key: str) -> None:
             except ImportError:
                 pass
         logger.info("LLM switched to %s (%s)", key, MODELS[key]["id"])
+        # Cloud only (small ephemeral disk); local machines keep downloads so
+        # switching back doesn't re-download over a home connection.
+        if os.environ.get("AVC_AUTH_TOKEN") and old_id != MODELS[key]["id"]:
+            _delete_model_cache(old_id)
 
 
 def availability() -> tuple[bool, str]:
@@ -164,19 +206,38 @@ def _strip_thinking(text: str) -> str:
     return inner
 
 
+def _render_prompt(tokenizer, messages: list[dict]) -> str:
+    """Turn a message list into a prompt string, robust across model families.
+    Tries the model's own chat template (Qwen3 also gets thinking disabled),
+    and if a model ships without a usable template, falls back to a simple
+    role-tagged prompt so generation can never hard-fail here."""
+    try:
+        return tokenizer.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=True, enable_thinking=False
+        )
+    except TypeError:
+        pass  # older/other models don't accept enable_thinking
+    except Exception:
+        return _manual_prompt(messages)
+    try:
+        return tokenizer.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=True
+        )
+    except Exception:
+        return _manual_prompt(messages)
+
+
+def _manual_prompt(messages: list[dict]) -> str:
+    parts = [f"{m['role'].capitalize()}: {m['content']}" for m in messages]
+    parts.append("Assistant:")
+    return "\n\n".join(parts)
+
+
 def _run(messages: list[dict], max_new_tokens: int) -> str:
     import torch
 
     tokenizer, model = _get_bundle()
-    try:
-        # Qwen3 supports disabling its thinking mode at the template level.
-        prompt = tokenizer.apply_chat_template(
-            messages, tokenize=False, add_generation_prompt=True, enable_thinking=False
-        )
-    except TypeError:
-        prompt = tokenizer.apply_chat_template(
-            messages, tokenize=False, add_generation_prompt=True
-        )
+    prompt = _render_prompt(tokenizer, messages)
     inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
 
     # Different model families end their turn with different tokens (Qwen:
