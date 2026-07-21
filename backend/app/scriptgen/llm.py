@@ -31,11 +31,11 @@ MODELS: dict[str, dict] = {
         "download": "~5.5 GB in 4-bit",
         "quant4": True,  # fp16 would need ~16 GB — 4-bit fits a T4
     },
-    "hermes3": {
-        "id": "NousResearch/Hermes-3-Llama-3.2-3B",
-        "label": "Hermes 3 (Llama 3.2 3B)",
-        "download": "~6 GB",
-        "quant4": False,
+    "xlam-7b": {
+        "id": "Salesforce/xLAM-7b-r",
+        "label": "xLAM 7B (tool specialist, 4-bit)",
+        "download": "~5 GB in 4-bit",
+        "quant4": True,  # 7B fp16 (~14 GB) leaves no room for the pipeline models
     },
 }
 DEFAULT_MODEL = "qwen"
