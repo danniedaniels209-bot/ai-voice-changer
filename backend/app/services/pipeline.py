@@ -72,6 +72,7 @@ def run_pipeline(
     precision: bool = False,
     dub_language: str | None = None,
     compress_output: bool = False,
+    subtitle_language: str | None = None,
 ) -> None:
     """Entry point for the worker pool task submitted by POST /convert."""
     try:
@@ -261,6 +262,7 @@ def run_pipeline(
                 if (continuity is not None and continuity.enabled) else 0,
                 "strict_fit": bool(precision),
                 "compress": bool(compress_output),
+                "subtitle_language": subtitle_language,
                 "total_duration": job.video_metadata.duration_seconds
                 if job.video_metadata else None,
                 "background": str(background_path) if background_path else None,
@@ -277,6 +279,7 @@ def run_pipeline(
         finalize_export(
             job_id, job, video_path, converted_voice_path, background_path,
             subtitle_cues, app_settings, job_dir, compress=compress_output,
+            subtitle_language=subtitle_language,
         )
 
         if app_settings.delete_temp_on_success:
@@ -546,6 +549,7 @@ def finalize_export(
     app_settings,
     job_dir: Path,
     compress: bool = False,
+    subtitle_language: str | None = None,
 ) -> Path:
     """
     Mix + subtitle + mux + verify + publish + job completion — shared by the
@@ -647,6 +651,29 @@ def finalize_export(
         job_manager.append_log(job_id, f"Subtitles saved to {subtitle_path.name}")
 
     extra_outputs: list[str] = []
+
+    # Translated subtitles: same cues, translated text, timing untouched.
+    # Best-effort — a translation failure must never sink a finished export.
+    if subtitle_path and subtitle_language and subtitle_cues:
+        try:
+            from app.services import translation_service
+            from app.services.transcribe_service import SpeechSegment
+            from app.utils import subtitles
+
+            lang_name = translation_service.LANGUAGES.get(subtitle_language, subtitle_language)
+            job_manager.append_log(job_id, f"Translating subtitles into {lang_name}...")
+            source = [SpeechSegment(start=c.start, end=c.end, text=c.text) for c in subtitle_cues]
+            translated = translation_service.translate_segments(source, subtitle_language)
+            translated_path = output_path.with_suffix(f".{subtitle_language}.srt")
+            subtitles.write_srt(
+                [subtitles.SubtitleCue(s.start, s.end, s.text) for s in translated],
+                translated_path,
+            )
+            extra_outputs.append(str(translated_path))
+            job_manager.append_log(job_id, f"Translated subtitles saved to {translated_path.name}")
+        except Exception as exc:  # noqa: BLE001
+            job_manager.append_log(job_id, f"Subtitle translation failed (export unaffected): {exc}")
+
     if app_settings.vertical_export:
         _check_cancelled(job_id)
         job_manager.append_log(job_id, "Exporting vertical (9:16) variant for Shorts...")
@@ -770,6 +797,7 @@ def run_reexport(job_id: str, edited_segments: list[dict]) -> None:
         finalize_export(
             job_id, job, Path(job.video_path), converted_voice_path, background,
             placements, app_settings, job_dir, compress=bool(recipe.get("compress")),
+            subtitle_language=recipe.get("subtitle_language"),
         )
 
     except JobInterruptedError as exc:

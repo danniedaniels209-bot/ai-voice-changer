@@ -168,6 +168,7 @@ export interface ConvertRequest {
   chain: ChainStage | null;
   continuity: ContinuitySettings;
   dub_language: string | null;
+  subtitle_language: string | null;
   precision_alignment: boolean;
   narration_engine: NarrationEngine;
   exaggeration: number;

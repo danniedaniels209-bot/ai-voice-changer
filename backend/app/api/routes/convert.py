@@ -153,6 +153,15 @@ def start_conversion(job_id: str, request: ConvertRequest) -> Job:
         summary["Background separation"] = "skipped"
     if request.compress_output:
         summary["File size"] = "compressed (re-encoded)"
+    if request.subtitle_language and request.mode in ("tts", "script"):
+        from app.services.translation_service import LANGUAGES as _SL
+
+        if request.subtitle_language not in _SL:
+            raise AppError(
+                f"Unsupported subtitle language '{request.subtitle_language}'.",
+                details={"field": "subtitle_language"},
+            )
+        summary["Extra subtitles"] = _SL[request.subtitle_language]
 
     # Atomic check-and-set: prevents two concurrent /convert calls from both
     # starting a pipeline for the same job.
@@ -176,6 +185,7 @@ def start_conversion(job_id: str, request: ConvertRequest) -> Job:
         request.precision_alignment,
         request.dub_language,
         request.compress_output,
+        request.subtitle_language if request.mode in ("tts", "script") else None,
     )
     return claimed
 

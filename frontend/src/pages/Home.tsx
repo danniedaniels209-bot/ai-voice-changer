@@ -131,6 +131,7 @@ export function Home() {
   const [dubLanguages, setDubLanguages] = useState<DubLanguage[]>([]);
   const [dubLanguage, setDubLanguage] = useState<string>("");
   const [dubVoice, setDubVoice] = useState<string>("");
+  const [subtitleLanguage, setSubtitleLanguage] = useState<string>("");
   const [voiceStyle, setVoiceStyle] = useState<VoiceStyle>("standard");
   const [params, setParams] = useState<VoiceConversionParams>(DEFAULT_VOICE_PARAMS);
   const [activePreset, setActivePreset] = useState<string | null>(null);
@@ -243,6 +244,10 @@ export function Home() {
           script: mode === "script" ? script : null,
           continuity,
           dub_language: mode === "tts" && dubLanguage ? dubLanguage : null,
+          subtitle_language:
+            (mode === "tts" || mode === "script") && subtitleLanguage
+              ? subtitleLanguage
+              : null,
           precision_alignment: mode === "tts" ? precisionAlignment : false,
           narration_engine: narrationEngine,
           exaggeration,
@@ -274,6 +279,7 @@ export function Home() {
 
   const showVoicePicker = mode === "tts" || mode === "script" || mode === "openvoice";
   const advancedCount = [
+    (mode === "tts" || mode === "script") && subtitleLanguage !== "",
     mode === "tts" && precisionAlignment,
     continuity.enabled,
     chainEnabled,
@@ -698,9 +704,26 @@ export function Home() {
 
       <Disclosure
         title="Advanced options"
-        hint="Continuity, merge modes, precision placement — the defaults are right for most videos"
+        hint="Translated subtitles, continuity, merge modes, precision placement — the defaults are right for most videos"
         badge={advancedCount}
       >
+        {(mode === "tts" || mode === "script") && dubLanguages.length > 0 && (
+          <label className="text-sm block">
+            <div className="text-text-muted mb-1">
+              Also export subtitles in another language (needs GPU session — audio unchanged)
+            </div>
+            <select
+              value={subtitleLanguage}
+              onChange={(e) => setSubtitleLanguage(e.target.value)}
+              className="w-full bg-surface border border-border rounded-md px-3 py-2"
+            >
+              <option value="">No - English subtitles only</option>
+              {dubLanguages.map((l) => (
+                <option key={l.code} value={l.code}>{l.name}</option>
+              ))}
+            </select>
+          </label>
+        )}
         {mode === "tts" && (
           <label className="flex items-start gap-2 text-sm cursor-pointer">
             <input

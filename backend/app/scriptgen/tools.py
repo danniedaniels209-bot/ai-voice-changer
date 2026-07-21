@@ -27,7 +27,8 @@ get_job_status(job_id: str)
 
 start_conversion(job_id: str, mode: str, voice?: str, engine?: str,
                  expressiveness?: float, dub_language?: str, script?: str,
-                 model_name?: str, precision?: bool, compress?: bool)
+                 model_name?: str, precision?: bool, compress?: bool,
+                 subtitle_language?: str)
   -> Starts converting an uploaded job. mode: "tts" (re-voice the speech),
      "script" (narrate the given script text), "rvc" (voice model,
      needs model_name), "openvoice" (expressive clone).
@@ -46,6 +47,19 @@ edit_segment(job_id: str, segment_id: int, new_text: str)
 
 list_voices()
   -> Available narrator voices: id, description, gender, accent.
+
+create_tool(name: str, purpose: str)
+  -> Build yourself a NEW tool: an LLM writes a small Python program
+     (stdlib only) for the given purpose, it is tested in a sandbox, and
+     only registered if its self-test passes. Use when the user asks for
+     something no existing tool covers (e.g. "word frequency counter",
+     "timestamp math", "title case fixer").
+
+run_custom_tool(name: str, args: dict)
+  -> Run a tool previously built with create_tool.
+
+list_custom_tools()
+  -> Names + descriptions of the tools you have built so far.
 """.strip()
 
 
@@ -177,6 +191,7 @@ def _tool_start_conversion(args: dict) -> str:
         exaggeration=expressiveness,
         script=(str(args.get("script") or "").strip()) or None,
         dub_language=dub_language,
+        subtitle_language=(str(args.get("subtitle_language") or "").strip().lower()) or None,
         precision_alignment=bool(args.get("precision", False)),
         compress_output=bool(args.get("compress", False)),
     )
@@ -197,7 +212,33 @@ def _tool_list_voices(args: dict) -> str:
     )
 
 
+def _tool_create_tool(args: dict) -> str:
+    from app.scriptgen import toolforge
+
+    return toolforge.create_tool(
+        str(args.get("name", "")), str(args.get("purpose", ""))
+    )
+
+
+def _tool_run_custom_tool(args: dict) -> str:
+    from app.scriptgen import toolforge
+
+    tool_args = args.get("args")
+    return toolforge.run_tool(
+        str(args.get("name", "")), tool_args if isinstance(tool_args, dict) else {}
+    )
+
+
+def _tool_list_custom_tools(args: dict) -> str:
+    from app.scriptgen import toolforge
+
+    return toolforge.list_tools()
+
+
 _TOOLS = {
+    "create_tool": _tool_create_tool,
+    "run_custom_tool": _tool_run_custom_tool,
+    "list_custom_tools": _tool_list_custom_tools,
     "list_jobs": _tool_list_jobs,
     "get_job_status": _tool_get_job_status,
     "start_conversion": _tool_start_conversion,

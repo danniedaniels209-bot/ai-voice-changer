@@ -178,6 +178,15 @@ class ConvertRequest(BaseModel):
             "converted along with the voice rather than preserved untouched."
         ),
     )
+    subtitle_language: str | None = Field(
+        default=None,
+        description=(
+            "Also export a translated .srt subtitle file in this language "
+            "(es/fr/de/pt/hi/it/ja/ko/ar/ru) next to the English one — the "
+            "audio is untouched. Needs a GPU session (uses the local LLM). "
+            "tts/script modes only (RVC keeps the original words)."
+        ),
+    )
     compress_output: bool = Field(
         default=False,
         description=(
