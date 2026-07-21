@@ -6,6 +6,7 @@ import {
   Sparkles,
   ListVideo,
   Box,
+  BookOpen,
   Settings,
   PanelLeftClose,
   PanelLeftOpen,
@@ -37,7 +38,10 @@ const NAV_GROUPS: Group[] = [
   },
   {
     label: "System",
-    items: [{ to: "/settings", label: "Settings", icon: Settings }],
+    items: [
+      { to: "/guide", label: "Guide", icon: BookOpen },
+      { to: "/settings", label: "Settings", icon: Settings },
+    ],
   },
 ];
 
@@ -47,6 +51,7 @@ const PAGE_TITLES: Record<string, string> = {
   "/chat": "AI Chat",
   "/processing": "Jobs",
   "/models": "Voice Models",
+  "/guide": "Guide",
   "/settings": "Settings",
 };
 

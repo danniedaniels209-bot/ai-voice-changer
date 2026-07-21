@@ -5,7 +5,7 @@ import { FileDropzone } from "../components/FileDropzone";
 import { Button } from "../components/Button";
 import { listModels } from "../api/models";
 import { listVoices, listCustomVoices, listDubLanguages } from "../api/voices";
-import { getSettings } from "../api/settings";
+import { getSettings, updateSettings } from "../api/settings";
 import { uploadVideo, startConversion } from "../api/jobs";
 import { ApiError, API_BASE_URL } from "../api/client";
 import {
@@ -132,6 +132,7 @@ export function Home() {
   const [dubLanguage, setDubLanguage] = useState<string>("");
   const [dubVoice, setDubVoice] = useState<string>("");
   const [subtitleLanguage, setSubtitleLanguage] = useState<string>("");
+  const [subtitlesOn, setSubtitlesOn] = useState(true);
   const [voiceStyle, setVoiceStyle] = useState<VoiceStyle>("standard");
   const [params, setParams] = useState<VoiceConversionParams>(DEFAULT_VOICE_PARAMS);
   const [activePreset, setActivePreset] = useState<string | null>(null);
@@ -180,6 +181,7 @@ export function Home() {
     getSettings()
       .then((s) => {
         setNarrationEngine(s.default_narration_engine);
+        setSubtitlesOn(s.generate_subtitles);
         if (s.custom_voices) {
           listCustomVoices().then(setCustomVoices).catch(() => {});
         }
@@ -279,7 +281,6 @@ export function Home() {
 
   const showVoicePicker = mode === "tts" || mode === "script" || mode === "openvoice";
   const advancedCount = [
-    (mode === "tts" || mode === "script") && subtitleLanguage !== "",
     mode === "tts" && precisionAlignment,
     continuity.enabled,
     chainEnabled,
@@ -340,6 +341,57 @@ export function Home() {
             </span>
           </button>
         </div>
+      </section>
+
+      <section>
+        <h3 className="text-sm font-medium text-text-muted mb-2">Subtitles</h3>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              setSubtitlesOn(true);
+              updateSettings({ generate_subtitles: true }).catch(() => {});
+            }}
+            className={`rounded-full border px-4 py-1.5 text-sm transition-colors ${
+              subtitlesOn
+                ? "border-accent bg-accent/10 text-text"
+                : "border-border bg-surface text-text-muted hover:border-accent/50"
+            }`}
+          >
+            Add subtitles (.srt)
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setSubtitlesOn(false);
+              updateSettings({ generate_subtitles: false }).catch(() => {});
+            }}
+            className={`rounded-full border px-4 py-1.5 text-sm transition-colors ${
+              !subtitlesOn
+                ? "border-accent bg-accent/10 text-text"
+                : "border-border bg-surface text-text-muted hover:border-accent/50"
+            }`}
+          >
+            No subtitles
+          </button>
+          {subtitlesOn && (mode === "tts" || mode === "script") && dubLanguages.length > 0 && (
+            <select
+              value={subtitleLanguage}
+              onChange={(e) => setSubtitleLanguage(e.target.value)}
+              title="Also export a translated subtitle file (needs GPU session)"
+              className="bg-surface border border-border rounded-md px-3 py-1.5 text-sm"
+            >
+              <option value="">+ English only</option>
+              {dubLanguages.map((l) => (
+                <option key={l.code} value={l.code}>+ {l.name} copy</option>
+              ))}
+            </select>
+          )}
+        </div>
+        <p className="text-xs text-text-muted mt-2">
+          Subtitles export as a separate .srt file next to the video — upload it to YouTube
+          or turn on burned captions in Settings.
+        </p>
       </section>
 
       <section>
@@ -704,26 +756,9 @@ export function Home() {
 
       <Disclosure
         title="Advanced options"
-        hint="Translated subtitles, continuity, merge modes, precision placement — the defaults are right for most videos"
+        hint="Continuity, merge modes, precision placement — the defaults are right for most videos"
         badge={advancedCount}
       >
-        {(mode === "tts" || mode === "script") && dubLanguages.length > 0 && (
-          <label className="text-sm block">
-            <div className="text-text-muted mb-1">
-              Also export subtitles in another language (needs GPU session — audio unchanged)
-            </div>
-            <select
-              value={subtitleLanguage}
-              onChange={(e) => setSubtitleLanguage(e.target.value)}
-              className="w-full bg-surface border border-border rounded-md px-3 py-2"
-            >
-              <option value="">No - English subtitles only</option>
-              {dubLanguages.map((l) => (
-                <option key={l.code} value={l.code}>{l.name}</option>
-              ))}
-            </select>
-          </label>
-        )}
         {mode === "tts" && (
           <label className="flex items-start gap-2 text-sm cursor-pointer">
             <input

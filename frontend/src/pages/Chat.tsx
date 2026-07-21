@@ -8,6 +8,7 @@ import {
   type ScriptgenStatus,
 } from "../api/scriptgen";
 import { ApiError } from "../api/client";
+import { uploadVideo } from "../api/jobs";
 
 // Starter prompts for the assistant actions — clicking a chip drops the
 // instruction into the input so the user just pastes their text after it.
@@ -43,6 +44,9 @@ export function Chat() {
   const [error, setError] = useState<string | null>(null);
   const [uploading, setUploading] = useState<string | null>(null);
   const [compressUpload, setCompressUpload] = useState(false);
+  const [toolFormOpen, setToolFormOpen] = useState(false);
+  const [toolName, setToolName] = useState("");
+  const [toolPurpose, setToolPurpose] = useState("");
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -93,7 +97,6 @@ export function Chat() {
     setError(null);
     setUploading(`Uploading ${file.name}… 0%`);
     try {
-      const { uploadVideo } = await import("../api/jobs");
       const job = await uploadVideo(file, (pct) =>
         setUploading(`Uploading ${file.name}… ${pct.toFixed(0)}%`),
       );
@@ -116,6 +119,20 @@ export function Chat() {
     if (!action) return;
     setInput(action.prompt);
     inputRef.current?.focus();
+  }
+
+  function submitToolForm() {
+    const name = toolName.trim();
+    const purpose = toolPurpose.trim();
+    if (!name || !purpose || busy) return;
+    setToolFormOpen(false);
+    setToolName("");
+    setToolPurpose("");
+    // Route through chat so the model runs create_tool (sandbox build + test).
+    void sendMessage(
+      `Use the create_tool tool to build a tool named "${name}" that does this: ${purpose}. ` +
+        "Call create_tool now, then tell me if it passed its sandbox test.",
+    );
   }
 
   async function handleModelChange(key: string) {
@@ -205,7 +222,19 @@ export function Chat() {
         </div>
       )}
 
-      <div className="flex flex-wrap gap-1.5">
+      <div className="flex flex-wrap gap-1.5 items-center">
+        <button
+          type="button"
+          onClick={() => setToolFormOpen((o) => !o)}
+          disabled={!available}
+          className={`px-3 py-1 rounded-full border text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
+            toolFormOpen
+              ? "border-accent bg-accent/10 text-text"
+              : "border-accent/50 bg-surface text-accent hover:bg-accent/10"
+          }`}
+        >
+          🛠 Create tool
+        </button>
         {(status?.actions ?? Object.keys(ACTION_PROMPTS)).map((key) => (
           <button
             key={key}
@@ -218,6 +247,46 @@ export function Chat() {
           </button>
         ))}
       </div>
+
+      {toolFormOpen && (
+        <div className="rounded-lg border border-accent/40 bg-surface p-4 space-y-3 animate-rise-fast">
+          <div className="flex items-center justify-between">
+            <span className="font-medium text-sm">🛠 Create a new tool</span>
+            <span className="text-xs text-text-muted">
+              built &amp; tested by {models.find((m) => m.key === model)?.label ?? model}
+            </span>
+          </div>
+          <p className="text-xs text-text-muted">
+            The selected model writes a small Python program, tests it in a sandbox, and
+            keeps it only if the tests pass. Change the model in the top-right first if you
+            like — Qwen3 8B writes the best code.
+          </p>
+          <input
+            value={toolName}
+            onChange={(e) => setToolName(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, "_"))}
+            placeholder="tool name (e.g. words_per_minute)"
+            className="w-full bg-bg border border-border rounded-md px-3 py-2 text-sm"
+          />
+          <textarea
+            value={toolPurpose}
+            onChange={(e) => setToolPurpose(e.target.value)}
+            rows={2}
+            placeholder="What should it do? e.g. count words per minute given a transcript and a duration in seconds"
+            className="w-full bg-bg border border-border rounded-md px-3 py-2 text-sm resize-y"
+          />
+          <div className="flex gap-2">
+            <Button
+              onClick={submitToolForm}
+              disabled={!toolName.trim() || !toolPurpose.trim() || busy}
+            >
+              Build it
+            </Button>
+            <Button variant="ghost" onClick={() => setToolFormOpen(false)}>
+              Cancel
+            </Button>
+          </div>
+        </div>
+      )}
 
       {uploading && (
         <div className="rounded-md border border-border bg-surface text-text-muted text-sm px-4 py-2.5 animate-pulse">
