@@ -379,6 +379,7 @@ def synthesize_timeline(
     continuity=None,
     strict_fit: bool = False,
     seeds: dict[int, int] | None = None,
+    polish=None,
 ) -> tuple[Path, list[SpeechSegment]]:
     """
     Synthesizes every segment with the chosen voice and assembles them into
@@ -386,9 +387,19 @@ def synthesize_timeline(
     original timestamp. Returns (output_path, placements) where placements
     are the segments with their FINAL timing in the assembled track (after
     any tempo fitting) — the right timestamps for subtitles.
+
+    `polish` (voice_polish.PolishConfig) toggles optional refinements —
+    per-segment loudness leveling, edge de-clicking, pause-aware fitting, and
+    soft limiting. None = the default config (safe refinements on).
     """
     if not segments:
         raise SynthesisError("No speech segments to synthesize.")
+
+    from app.services import voice_polish
+
+    if polish is None:
+        polish = voice_polish.PolishConfig()
+    declick_samples = int(0.008 * TIMELINE_SR) if polish.declick else 0
 
     work_dir.mkdir(parents=True, exist_ok=True)
     timeline = np.zeros(int(total_duration * TIMELINE_SR) + TIMELINE_SR, dtype=np.float32)
@@ -471,6 +482,26 @@ def synthesize_timeline(
         grace_seconds = fade_samples / TIMELINE_SR
         seg_seconds = len(audio) / TIMELINE_SR
 
+        # Smart tempo: before speeding up the words, shrink the silences INSIDE
+        # an over-long segment — natural pacing survives, only dead air goes.
+        # Skipped in strict/precision mode, which needs exact intra-segment
+        # timing (and whose short phrases have no internal pauses anyway).
+        if (
+            polish.smart_tempo
+            and not strict_fit
+            and seg_seconds > target_seconds + grace_seconds
+        ):
+            audio = voice_polish.compress_internal_pauses(audio, TIMELINE_SR)
+            new_seconds = len(audio) / TIMELINE_SR
+            if new_seconds < seg_seconds:
+                logger.info(
+                    "Segment %d: trimmed internal pauses %.2fs -> %.2fs before any speed-up",
+                    index, seg_seconds, new_seconds,
+                )
+                sf.write(str(wav_path), audio, TIMELINE_SR, subtype="PCM_16")
+                _shutil.copyfile(wav_path, mp3_path)  # tempo path reads mp3_path
+                seg_seconds = new_seconds
+
         if seg_seconds > target_seconds + grace_seconds and engine == "edge":
             ratio = seg_seconds / target_seconds
             if 1.0 < ratio <= 1.8:
@@ -514,10 +545,15 @@ def synthesize_timeline(
 
         if memory is not None:
             audio = memory.adapt(audio)
-        if fade_samples > 0:
+        # Edge fade: the continuity crossfade and the de-click fade are the
+        # same operation at different lengths — apply the larger of the two
+        # once. De-click (~8 ms) removes boundary clicks even when continuity
+        # is off; it never changes the clip's length, so placement is exact.
+        edge = max(fade_samples, declick_samples)
+        if edge > 0:
             from app.services.continuity_service import apply_edge_fades
 
-            audio = apply_edge_fades(audio, fade_samples)
+            audio = apply_edge_fades(audio, edge)
 
         fitted.append((index, seg, audio, int(seg.start * TIMELINE_SR)))
 
@@ -527,8 +563,22 @@ def synthesize_timeline(
     # ---- Phase 2: validation against the master timeline ------------------
     _validate_reconstruction(fitted, master, fade_samples, borrow_frac, borrow_cap)
 
+    # Loudness leveling target: pull every clip toward the median loudness so
+    # no segment jumps out. Skipped when continuity's rolling-energy memory is
+    # already doing dynamic leveling (avoid correcting twice).
+    level_target = None
+    if polish.level_loudness and memory is None:
+        rms_values = [
+            float(np.sqrt((a**2).mean() + 1e-12)) for _, _, a, _ in fitted if len(a)
+        ]
+        if rms_values:
+            level_target = float(np.median(rms_values))
+
     # ---- Phase 3: overlap-add reconstruction in chronological order -------
     for index, seg, audio, start_idx in fitted:
+        if level_target is not None:
+            rms = float(np.sqrt((audio**2).mean() + 1e-12))
+            audio = audio * voice_polish.level_gain(rms, level_target)
         end_idx = min(start_idx + len(audio), len(timeline))
         # += so crossfade regions blend; validation guarantees any overlap
         # is confined to the fade region.
@@ -537,9 +587,14 @@ def synthesize_timeline(
             SpeechSegment(start=seg.start, end=seg.start + (end_idx - start_idx) / TIMELINE_SR, text=seg.text)
         )
 
-    peak = np.abs(timeline).max()
-    if peak > 1.0:
-        timeline = timeline / peak * 0.99
+    # Final stage: soft-knee limiting for consistent punch, or the plain
+    # peak-normalize guard when the limiter toggle is off.
+    if polish.soft_limiter:
+        timeline = voice_polish.soft_limiter(timeline)
+    else:
+        peak = np.abs(timeline).max()
+        if peak > 1.0:
+            timeline = timeline / peak * 0.99
 
     # Trim the safety tail back to the real duration.
     timeline = timeline[: int(total_duration * TIMELINE_SR)]

@@ -75,6 +75,38 @@ class ContinuitySettings(BaseModel):
     )
 
 
+class VoicePolish(BaseModel):
+    """
+    User-controlled voice-quality refinements (visible on the New Conversion
+    page, not in Settings). Applied to synthesized narration (tts/script
+    modes). Each is safe — refines sound without dropping/reordering speech.
+    """
+
+    level_loudness: bool = Field(
+        default=True,
+        description="Even out per-segment loudness so no line jumps out.",
+    )
+    declick: bool = Field(
+        default=True,
+        description="Tiny fades on every clip edge to remove boundary clicks.",
+    )
+    smart_tempo: bool = Field(
+        default=True,
+        description="Shrink pauses inside a long segment before speeding up "
+        "the words, so speech stays natural instead of rushed.",
+    )
+    voice_presence: bool = Field(
+        default=False,
+        description="Lift the presence band so the voice cuts through "
+        "background music (only affects mixes that have music).",
+    )
+    soft_limiter: bool = Field(
+        default=True,
+        description="Soft-knee limiting for consistent, punchy loudness "
+        "without crushing dynamics.",
+    )
+
+
 class ChainStage(BaseModel):
     """
     Optional second conversion applied to the voice track produced by the
@@ -138,6 +170,10 @@ class ConvertRequest(BaseModel):
     continuity: ContinuitySettings = Field(
         default_factory=ContinuitySettings,
         description="Natural-continuity processing (off by default).",
+    )
+    polish: VoicePolish = Field(
+        default_factory=VoicePolish,
+        description="User-toggled voice-quality refinements (tts/script modes).",
     )
     dub_language: str | None = Field(
         default=None,

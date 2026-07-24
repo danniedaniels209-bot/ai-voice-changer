@@ -160,6 +160,22 @@ export interface ChainStage {
 
 export type NarrationEngine = "edge" | "chatterbox";
 
+export interface VoicePolish {
+  level_loudness: boolean;
+  declick: boolean;
+  smart_tempo: boolean;
+  voice_presence: boolean;
+  soft_limiter: boolean;
+}
+
+export const DEFAULT_POLISH: VoicePolish = {
+  level_loudness: true,
+  declick: true,
+  smart_tempo: true,
+  voice_presence: false,
+  soft_limiter: true,
+};
+
 export interface ConvertRequest {
   mode: ConversionMode;
   model_name: string | null;
@@ -167,6 +183,7 @@ export interface ConvertRequest {
   script: string | null;
   chain: ChainStage | null;
   continuity: ContinuitySettings;
+  polish: VoicePolish;
   dub_language: string | null;
   subtitle_language: string | null;
   precision_alignment: boolean;

@@ -153,6 +153,20 @@ def start_conversion(job_id: str, request: ConvertRequest) -> Job:
         summary["Background separation"] = "skipped"
     if request.compress_output:
         summary["File size"] = "compressed (re-encoded)"
+    if request.mode in ("tts", "script"):
+        active = [
+            name
+            for name, on in (
+                ("loudness leveling", request.polish.level_loudness),
+                ("de-click", request.polish.declick),
+                ("smart tempo", request.polish.smart_tempo),
+                ("voice presence", request.polish.voice_presence),
+                ("soft limiter", request.polish.soft_limiter),
+            )
+            if on
+        ]
+        if active:
+            summary["Voice quality"] = ", ".join(active)
     if request.subtitle_language and request.mode in ("tts", "script"):
         from app.services.translation_service import LANGUAGES as _SL
 
@@ -186,6 +200,7 @@ def start_conversion(job_id: str, request: ConvertRequest) -> Job:
         request.dub_language,
         request.compress_output,
         request.subtitle_language if request.mode in ("tts", "script") else None,
+        request.polish.model_dump(),
     )
     return claimed
 

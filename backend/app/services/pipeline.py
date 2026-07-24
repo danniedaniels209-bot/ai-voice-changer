@@ -73,8 +73,12 @@ def run_pipeline(
     dub_language: str | None = None,
     compress_output: bool = False,
     subtitle_language: str | None = None,
+    polish=None,
 ) -> None:
     """Entry point for the worker pool task submitted by POST /convert."""
+    from app.services.voice_polish import PolishConfig
+
+    polish = polish if isinstance(polish, PolishConfig) else PolishConfig.from_dict(polish)
     try:
         job = job_manager.get_job(job_id)
         if not job.video_path:
@@ -143,12 +147,12 @@ def run_pipeline(
         if mode == "script":
             subtitle_cues, plan_segments = _run_script_stages(
                 job_id, job, converted_voice_path, job_dir, tts_voice, script,
-                narration_engine, exaggeration, device, continuity,
+                narration_engine, exaggeration, device, continuity, polish,
             )
         elif mode == "tts":
             subtitle_cues, plan_segments = _run_tts_stages(
                 job_id, job, voice_path, converted_voice_path, job_dir, tts_voice, device,
-                narration_engine, exaggeration, continuity, precision, dub_language,
+                narration_engine, exaggeration, continuity, precision, dub_language, polish,
             )
         elif mode == "openvoice":
             from app.services import expressive_service
@@ -263,6 +267,7 @@ def run_pipeline(
                 "strict_fit": bool(precision),
                 "compress": bool(compress_output),
                 "subtitle_language": subtitle_language,
+                "polish": polish.to_dict(),
                 "total_duration": job.video_metadata.duration_seconds
                 if job.video_metadata else None,
                 "background": str(background_path) if background_path else None,
@@ -279,7 +284,7 @@ def run_pipeline(
         finalize_export(
             job_id, job, video_path, converted_voice_path, background_path,
             subtitle_cues, app_settings, job_dir, compress=compress_output,
-            subtitle_language=subtitle_language,
+            subtitle_language=subtitle_language, polish=polish,
         )
 
         if app_settings.delete_temp_on_success:
@@ -320,6 +325,7 @@ def _run_tts_stages(
     continuity=None,
     precision: bool = False,
     dub_language: str | None = None,
+    polish=None,
 ) -> tuple[list, list]:
     """
     TTS mode: transcribe the (separated) speech locally with Whisper, then
@@ -422,6 +428,7 @@ def _run_tts_stages(
         device=device,
         continuity=continuity,
         strict_fit=precision,
+        polish=polish,
     )
     job_manager.append_log(job_id, "Narration synthesis complete.")
     return placements, segments
@@ -483,6 +490,7 @@ def _run_script_stages(
     exaggeration: float = 0.5,
     device: str = "cpu",
     continuity=None,
+    polish=None,
 ) -> tuple[list, list]:
     """
     Script mode: no transcription — the user wrote the narration. Sentences
@@ -534,6 +542,7 @@ def _run_script_stages(
         exaggeration=exaggeration,
         device=device,
         continuity=continuity,
+        polish=polish,
     )
     job_manager.append_log(job_id, "Narration synthesis complete.")
     return placements, segments
@@ -550,6 +559,7 @@ def finalize_export(
     job_dir: Path,
     compress: bool = False,
     subtitle_language: str | None = None,
+    polish=None,
 ) -> Path:
     """
     Mix + subtitle + mux + verify + publish + job completion — shared by the
@@ -562,14 +572,18 @@ def finalize_export(
     else:
         _advance(job_id, PipelineStage.MIXING_AUDIO, "Mixing converted voice with background audio...")
         merged_audio_path = job_dir / "merged_audio.wav"
+        apply_presence = bool(polish and getattr(polish, "voice_presence", False))
         mixer_service.mix_audio(
             converted_voice_path,
             background_path,
             merged_audio_path,
             duck_background=app_settings.music_ducking,
+            apply_presence=apply_presence,
         )
         if app_settings.music_ducking:
             job_manager.append_log(job_id, "Background audio ducked under the voice.")
+        if apply_presence:
+            job_manager.append_log(job_id, "Voice presence lifted to cut through the music.")
         job_manager.append_log(job_id, "Audio mixing complete.")
 
     _advance(job_id, PipelineStage.MUXING_VIDEO, "Exporting final video...")
@@ -715,6 +729,7 @@ def run_reexport(job_id: str, edited_segments: list[dict]) -> None:
 
     from app.services import tts_service
     from app.services.transcribe_service import SpeechSegment
+    from app.services.voice_polish import PolishConfig
     from app.utils.settings_store import load_settings
 
     try:
@@ -727,6 +742,7 @@ def run_reexport(job_id: str, edited_segments: list[dict]) -> None:
                 "temp files were cleaned). Re-run the conversion to edit it."
             )
         recipe = _json.loads(recipe_path.read_text(encoding="utf-8"))
+        polish = PolishConfig.from_dict(recipe.get("polish"))
         if not job.video_path or not Path(job.video_path).exists():
             raise AppError("The job's source video is no longer on disk — re-upload to edit.")
 
@@ -775,6 +791,7 @@ def run_reexport(job_id: str, edited_segments: list[dict]) -> None:
             continuity=_Continuity() if _Continuity.enabled else None,
             strict_fit=bool(recipe.get("strict_fit")),
             seeds=seeds,
+            polish=polish,
         )
         job_manager.append_log(job_id, "Edited narration re-synthesized.")
 
@@ -797,7 +814,7 @@ def run_reexport(job_id: str, edited_segments: list[dict]) -> None:
         finalize_export(
             job_id, job, Path(job.video_path), converted_voice_path, background,
             placements, app_settings, job_dir, compress=bool(recipe.get("compress")),
-            subtitle_language=recipe.get("subtitle_language"),
+            subtitle_language=recipe.get("subtitle_language"), polish=polish,
         )
 
     except JobInterruptedError as exc:

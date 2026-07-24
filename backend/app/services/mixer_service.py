@@ -115,6 +115,7 @@ def mix_audio(
     voice_gain: float = 1.0,
     background_gain: float = 1.0,
     duck_background: bool = False,
+    apply_presence: bool = False,
 ) -> Path:
     """
     Combines the converted voice track with the background bed, aligning
@@ -136,6 +137,12 @@ def mix_audio(
     target_sr = bg_sr
     voice = _resample_if_needed(voice, voice_sr, target_sr)
     voice = _match_length(voice, background.shape[0])
+
+    if apply_presence:
+        # Presence-band lift so the voice cuts through the music bed.
+        from app.services import voice_polish
+
+        voice = voice_polish.presence_eq(voice, target_sr)
 
     if duck_background:
         background = background * _ducking_gain(voice, target_sr)[:, None]

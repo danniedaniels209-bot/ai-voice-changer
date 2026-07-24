@@ -10,8 +10,10 @@ import { uploadVideo, startConversion } from "../api/jobs";
 import { ApiError, API_BASE_URL } from "../api/client";
 import {
   DEFAULT_CONTINUITY,
+  DEFAULT_POLISH,
   DEFAULT_VOICE_PARAMS,
   type ContinuitySettings,
+  type VoicePolish,
   type CustomVoiceInfo,
   type ConversionMode,
   type RVCModelInfo,
@@ -138,6 +140,7 @@ export function Home() {
   const [activePreset, setActivePreset] = useState<string | null>(null);
 
   const [continuity, setContinuity] = useState<ContinuitySettings>(DEFAULT_CONTINUITY);
+  const [polish, setPolish] = useState<VoicePolish>(DEFAULT_POLISH);
   const [narrationEngine, setNarrationEngine] = useState<NarrationEngine>("edge");
   const [exaggeration, setExaggeration] = useState(0.5);
   const [chainEnabled, setChainEnabled] = useState(false);
@@ -245,6 +248,7 @@ export function Home() {
               : selectedVoice || "en-US-GuyNeural",
           script: mode === "script" ? script : null,
           continuity,
+          polish,
           dub_language: mode === "tts" && dubLanguage ? dubLanguage : null,
           subtitle_language:
             (mode === "tts" || mode === "script") && subtitleLanguage
@@ -560,6 +564,47 @@ export function Home() {
                 delivery is replaced by the AI voice's own style. To keep the original delivery,
                 use Voice model (RVC) with "Preserve Speaking Style".
               </p>
+            )}
+
+            {(mode === "tts" || mode === "script") && (
+              <div className="mt-4 rounded-lg border border-border bg-surface/50 p-4">
+                <div className="text-sm font-medium mb-1">Voice quality</div>
+                <p className="text-xs text-text-muted mb-3">
+                  Refinements applied to the narration. On by default — turn any off if you
+                  prefer the raw voice.
+                </p>
+                <div className="space-y-2.5">
+                  {([
+                    ["level_loudness", "Even out loudness", "Keeps every line at one level so none jumps out."],
+                    ["declick", "Smooth edges", "Removes tiny clicks/pops at segment boundaries."],
+                    ["smart_tempo", "Natural pacing", "Shrinks pauses before speeding up words, so speech isn't rushed."],
+                    ["soft_limiter", "Consistent loudness", "Soft limiting for punch without crushing dynamics."],
+                    ["voice_presence", "Cut through music", "Lifts the voice so it sits above a background music bed."],
+                  ] as [keyof VoicePolish, string, string][]).map(([key, title, desc]) => (
+                    <label key={key} className="flex items-start gap-2.5 text-sm cursor-pointer">
+                      <button
+                        type="button"
+                        role="switch"
+                        aria-checked={polish[key]}
+                        onClick={() => setPolish((p) => ({ ...p, [key]: !p[key] }))}
+                        className={`mt-0.5 shrink-0 w-9 h-5 rounded-full transition-colors relative ${
+                          polish[key] ? "bg-accent" : "bg-elevated border border-border"
+                        }`}
+                      >
+                        <span
+                          className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all ${
+                            polish[key] ? "left-4" : "left-0.5"
+                          }`}
+                        />
+                      </button>
+                      <span>
+                        <span className="font-medium block">{title}</span>
+                        <span className="text-text-muted text-xs">{desc}</span>
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              </div>
             )}
           </>
         )}
