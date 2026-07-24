@@ -158,6 +158,43 @@ def _mp3_to_wav(mp3_path: Path, wav_path: Path, tempo: float = 1.0) -> None:
         raise SynthesisError(f"Could not decode synthesized audio: {tail}")
 
 
+# Onset-tightening: synthesized clips carry a little synthetic silence — a
+# breath before the first word, dead air after the last. Since every clip is
+# pinned at its ORIGINAL timestamp, that leading silence would push the actual
+# spoken word later than the speaker began it, loosening sync; the trailing
+# silence would pad the slot and force needless speed-up on the next segment.
+# Trimming both ends makes the first real sound land exactly on the timestamp.
+_SILENCE_FLOOR_DB = -45.0   # relative to the clip's own peak
+_SILENCE_MARGIN_S = 0.025   # keep 25 ms around real speech — never clip an attack
+
+
+def _trim_silence_edges(audio: np.ndarray, sr: int) -> np.ndarray:
+    """
+    Return `audio` with leading/trailing near-silence removed, keeping a small
+    margin so a word's attack/release is never clipped. A clip that is
+    essentially silent, or already tight, is returned unchanged. This never
+    touches the middle and never empties a clip — no speech can be lost, only
+    silence — so it is safe to apply to every rendered utterance.
+    """
+    if audio.size == 0:
+        return audio
+    peak = float(np.abs(audio).max())
+    if peak < 1e-4:
+        return audio  # essentially silent — leave as-is
+    threshold = max(peak * (10.0 ** (_SILENCE_FLOOR_DB / 20.0)), 1e-5)
+    above = np.abs(audio) >= threshold
+    if not bool(above.any()):
+        return audio
+    first = int(np.argmax(above))
+    last = len(audio) - int(np.argmax(above[::-1]))  # exclusive index past last True
+    margin = int(_SILENCE_MARGIN_S * sr)
+    start = max(0, first - margin)
+    end = min(len(audio), last + margin)
+    if start >= end or (start == 0 and end == len(audio)):
+        return audio
+    return audio[start:end].copy()
+
+
 def _allowed_end_seconds(
     seg_end: float,
     next_start: float | None,
@@ -293,6 +330,17 @@ def _render_cached(
         _synthesize_one(text, voice, raw)
     _mp3_to_wav(raw, wav)
     raw.unlink(missing_ok=True)
+
+    # Tighten the clip's edges so its first spoken sound lands exactly on the
+    # segment timestamp. Done here (not during fit) so the editor preview and
+    # the final track use byte-identical audio, and the tighter length feeds
+    # the fitter — fewer segments need speeding up.
+    clip, clip_sr = sf.read(str(wav), dtype="float32")
+    if clip.ndim > 1:
+        clip = clip.mean(axis=1)
+    tightened = _trim_silence_edges(clip, clip_sr)
+    if len(tightened) != len(clip):
+        sf.write(str(wav), tightened, clip_sr, subtype="PCM_16")
     return wav
 
 
