@@ -83,6 +83,49 @@ def test_execute_returns_error_text_for_bad_input():
     assert workspace.execute("nope", {}).startswith("Error:")
 
 
+def test_write_file_creates_nested_folders():
+    """Scaffolding a project must not need explicit mkdir calls."""
+    workspace.write_file("myapp/src/index.js", "console.log(1)\n")
+    assert workspace.list_files() == ["myapp/src/index.js"]
+
+
+def test_create_folder_and_traversal_guard():
+    workspace.create_folder("pkg/sub")
+    assert (workspace.workspace_dir() / "pkg" / "sub").is_dir()
+    with pytest.raises(ValueError):
+        workspace.create_folder("../outside")
+
+
+def test_run_command_executes_in_workspace():
+    workspace.write_file("hello.txt", "hi")
+    out = workspace.run_command("python -c \"import os; print(os.listdir('.'))\"")
+    assert "hello.txt" in out
+    assert "exit code: 0" in out
+
+
+def test_run_command_reports_failures_and_needs_input():
+    out = workspace.run_command("python -c \"raise SystemExit(3)\"")
+    assert "exit code: 3" in out
+    with pytest.raises(ValueError):
+        workspace.run_command("   ")
+
+
+def test_run_command_times_out():
+    out = workspace.run_command("python -c \"import time; time.sleep(30)\"", timeout=3)
+    assert "Timed out" in out
+
+
+def test_zip_workspace_bundles_every_file():
+    import zipfile
+
+    workspace.write_file("app/main.py", "print('x')\n")
+    workspace.write_file("README.md", "# hi\n")
+    archive = workspace.zip_workspace()
+    with zipfile.ZipFile(archive) as z:
+        names = set(z.namelist())
+    assert "app/main.py" in names and "README.md" in names
+
+
 def test_clear_empties_the_workspace():
     workspace.write_file("a.py", "1")
     workspace.write_file("b/c.py", "2")

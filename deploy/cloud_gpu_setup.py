@@ -21,6 +21,7 @@ from __future__ import annotations
 import os
 import re
 import secrets
+import shutil
 import subprocess
 import sys
 import threading
@@ -34,7 +35,8 @@ BACKEND = ROOT / "backend"
 
 def run(cmd: list[str], **kw) -> None:
     print(f"$ {' '.join(cmd)}")
-    subprocess.run(cmd, check=True, **kw)
+    kw.setdefault("check", True)
+    subprocess.run(cmd, **kw)
 
 
 def detect_platform() -> str:
@@ -75,6 +77,17 @@ def main() -> None:
     run([sys.executable, "-m", "pip", "install", "-q",
          "resemble-perth", "s3tokenizer", "conformer", "diffusers", "wordfreq",
          "accelerate", "python-docx", "bitsandbytes"])
+
+    # 2b. Node.js for the Coder workspace (Colab usually ships it; install
+    # quietly if not, so the agent can run/build JS projects too).
+    if shutil.which("node") is None:
+        print("Installing Node.js for the Coder workspace...")
+        try:
+            run(["apt-get", "install", "-y", "-qq", "nodejs", "npm"], check=False)
+        except Exception as exc:  # noqa: BLE001 — optional convenience
+            print(f"  (skipped: {exc})")
+    node_path = shutil.which("node")
+    print(f"Node.js: {node_path or 'not available (Python-only Coder workspace)'}")
 
     # 3. Tunnel client (cloudflared — no account needed)
     tunnel_bin = Path("/tmp/cloudflared")

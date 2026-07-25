@@ -18,7 +18,7 @@ from app.scriptgen import llm, workspace
 
 router = APIRouter(prefix="/coder", tags=["coder"])
 
-MAX_TOOL_ROUNDS = 12  # coding needs more steps than a normal chat turn
+MAX_TOOL_ROUNDS = 24  # building a whole app takes many steps
 
 
 class ChatMessage(BaseModel):
@@ -36,21 +36,42 @@ class WriteRequest(BaseModel):
 
 
 def _system_prompt() -> str:
+    import shutil as _shutil
+
     files = workspace.list_files()
     listing = "\n".join(files[:200]) if files else "(empty)"
+    runtimes = ["Python " + ".".join(map(str, __import__("sys").version_info[:3]))]
+    if _shutil.which("node"):
+        runtimes.append("Node.js")
+    if _shutil.which("git"):
+        runtimes.append("git")
+
     return (
-        "You are a coding assistant working inside an isolated workspace. "
-        "The user uploads files and asks you to build, fix, refactor, explain "
-        "or test them.\n\n"
+        "You are a software engineer with a real terminal, working in an "
+        "isolated project workspace. You can build complete applications "
+        "from scratch: create folders and files, install dependencies, run "
+        "builds and tests, and iterate until the code actually works.\n\n"
         "Tools available to you:\n"
         f"{workspace.TOOL_SPECS}\n\n"
         "To use a tool, reply with ONLY this (no other text):\n"
         '<tool_call>{"tool": "tool_name", "args": {"arg": "value"}}</tool_call>\n'
-        "The result comes back in the next message. Work step by step: read "
-        "before you edit, write complete files, and run the code to verify it "
-        "when you can. When you are done, explain briefly what you changed.\n\n"
-        "You can only touch this workspace — you cannot see or modify the "
-        "host application's own source.\n\n"
+        "The result comes back in the next message, then you continue.\n\n"
+        "How to work:\n"
+        "- When asked to build an app, create a sensible project folder and "
+        "scaffold the whole thing — source files, config, README, and a way "
+        "to run it. Don't just describe it; write the files.\n"
+        "- Read a file before editing it, and always write the COMPLETE new "
+        "content.\n"
+        "- If something is missing (a package, a tool), install it with "
+        "run_command — e.g. 'pip install flask' or 'npm install'.\n"
+        "- Actually RUN what you build to prove it works, and fix what "
+        "breaks. Read the error, then correct it.\n"
+        "- When you're finished, summarise what you built, list the key "
+        "files, and say how to run it. The user can download everything as a "
+        "zip.\n\n"
+        f"Available in this environment: {', '.join(runtimes)}.\n"
+        "You can only touch this workspace — never the host application's "
+        "own source.\n\n"
         f"Files currently in the workspace:\n{listing}"
     )
 
@@ -129,6 +150,17 @@ def download(path: str) -> FileResponse:
     except ValueError as exc:
         raise AppError(str(exc)) from exc
     return FileResponse(str(target), filename=target.name)
+
+
+@router.get("/download-all")
+def download_all() -> FileResponse:
+    """Everything the assistant built, as a single zip."""
+    if not workspace.list_files():
+        raise AppError("The workspace is empty — nothing to download yet.")
+    archive = workspace.zip_workspace()
+    return FileResponse(
+        str(archive), media_type="application/zip", filename="workspace.zip"
+    )
 
 
 @router.delete("/workspace")

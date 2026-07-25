@@ -74,3 +74,8 @@ export function clearWorkspace(): Promise<{ files: string[] }> {
 export function workspaceDownloadUrl(path: string): string {
   return `${API_BASE_URL}/coder/download?path=${encodeURIComponent(path)}`;
 }
+
+/** Everything the assistant built, as one zip. */
+export function workspaceZipUrl(): string {
+  return `${API_BASE_URL}/coder/download-all`;
+}

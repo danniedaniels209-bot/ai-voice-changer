@@ -4,6 +4,7 @@ import {
   FileUp,
   Trash2,
   Download,
+  Package,
   Save,
   Send,
   Wrench,
@@ -18,6 +19,7 @@ import {
   readWorkspaceFile,
   uploadToWorkspace,
   workspaceDownloadUrl,
+  workspaceZipUrl,
   writeWorkspaceFile,
   type CoderStatus,
 } from "../api/coder";
@@ -30,10 +32,10 @@ type Message = {
 };
 
 const SUGGESTIONS = [
+  "Build a to-do web app with a Flask backend.",
+  "Create a Python CLI that renames files in bulk.",
   "Explain what these files do.",
-  "Find and fix any bugs.",
-  "Add comments and clean this up.",
-  "Write tests for this, then run them.",
+  "Find and fix any bugs, then run the tests.",
 ];
 
 export function Coder() {
@@ -195,8 +197,8 @@ export function Coder() {
         <div>
           <h2 className="text-xl font-semibold mb-1">Coder</h2>
           <p className="text-text-muted text-sm">
-            Upload files or a folder, then tell the AI what to build, fix or explain. It reads,
-            edits and runs your code in an isolated sandbox.
+            Ask for a whole app or upload existing code. The AI creates folders and files,
+            installs what's missing, runs commands and tests its work — then you download it all.
           </p>
         </div>
         {models.length > 0 && (
@@ -232,17 +234,39 @@ export function Coder() {
         <aside className="rounded-lg border border-border bg-surface/50 p-3 space-y-3 self-start">
           <div className="flex items-center justify-between">
             <span className="text-sm font-medium">Workspace</span>
-            {files.length > 0 && (
-              <button
-                type="button"
-                onClick={handleClear}
-                title="Clear the workspace"
-                className="text-text-muted hover:text-danger transition-colors"
-              >
-                <Trash2 size={14} />
-              </button>
-            )}
+            <div className="flex items-center gap-2">
+              {files.length > 0 && (
+                <a
+                  href={workspaceZipUrl()}
+                  download
+                  title="Download everything as a .zip"
+                  className="text-text-muted hover:text-accent transition-colors"
+                >
+                  <Package size={14} />
+                </a>
+              )}
+              {files.length > 0 && (
+                <button
+                  type="button"
+                  onClick={handleClear}
+                  title="Clear the workspace"
+                  className="text-text-muted hover:text-danger transition-colors"
+                >
+                  <Trash2 size={14} />
+                </button>
+              )}
+            </div>
           </div>
+
+          {files.length > 0 && (
+            <a
+              href={workspaceZipUrl()}
+              download
+              className="block text-center text-xs rounded-md border border-accent/40 text-accent hover:bg-accent/10 py-1.5 transition-colors"
+            >
+              ⬇ Download all ({files.length} files)
+            </a>
+          )}
 
           <input
             ref={fileRef}
@@ -371,8 +395,8 @@ export function Coder() {
             {messages.length === 0 && (
               <div className="space-y-3">
                 <p className="text-text-muted text-sm">
-                  Upload code and ask for anything — the AI can read your files, write new ones,
-                  and run them to check its work.
+                  Describe what you want built, or upload code to work on. The AI scaffolds the
+                  project, installs dependencies, runs it, and fixes what breaks.
                 </p>
                 <div className="flex flex-wrap gap-1.5">
                   {SUGGESTIONS.map((s) => (

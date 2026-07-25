@@ -25,6 +25,7 @@ from app.core.logging import get_logger
 logger = get_logger(__name__)
 
 RUN_TIMEOUT_S = 60
+CMD_TIMEOUT_S = 300  # installs (pip/npm) legitimately take minutes
 MAX_FILE_CHARS = 40_000
 MAX_OUTPUT_CHARS = 8_000
 MAX_LISTING = 400
@@ -96,6 +97,56 @@ def delete_file(rel_path: str) -> str:
     return f"Deleted {rel_path}."
 
 
+def create_folder(rel_path: str) -> str:
+    path = resolve(rel_path)
+    path.mkdir(parents=True, exist_ok=True)
+    return f"Created folder {rel_path}."
+
+
+def run_command(command: str, timeout: int | None = None) -> str:
+    """
+    Run a shell command with the workspace as its working directory — the
+    agent's equivalent of a terminal, for scaffolding (mkdir, npx create-*),
+    dependency installs (pip/npm), builds and test runs.
+
+    Confined by cwd and a timeout, and it can only be reached through this
+    workspace API; output is capped so a chatty build can't flood the model.
+    """
+    command = (command or "").strip()
+    if not command:
+        raise ValueError("run_command needs a command string.")
+    try:
+        proc = subprocess.run(
+            command,
+            shell=True,
+            cwd=str(workspace_dir()),
+            capture_output=True,
+            text=True,
+            timeout=timeout or CMD_TIMEOUT_S,
+            encoding="utf-8",
+            errors="replace",
+        )
+    except subprocess.TimeoutExpired:
+        return f"Timed out after {timeout or CMD_TIMEOUT_S}s: {command}"
+
+    parts = [f"$ {command}"]
+    if proc.stdout.strip():
+        parts.append(proc.stdout.strip())
+    if proc.stderr.strip():
+        parts.append(f"[stderr]\n{proc.stderr.strip()}")
+    parts.append(f"exit code: {proc.returncode}")
+    return "\n".join(parts)[-MAX_OUTPUT_CHARS:]
+
+
+def zip_workspace() -> Path:
+    """Bundle the whole workspace into a zip the user can download."""
+    root = workspace_dir()
+    archive_base = Paths.temp / "coder_workspace_export"
+    for stale in Paths.temp.glob("coder_workspace_export.zip"):
+        stale.unlink(missing_ok=True)
+    return Path(shutil.make_archive(str(archive_base), "zip", root_dir=str(root)))
+
+
 def clear_workspace() -> None:
     root = workspace_dir()
     if root.exists():
@@ -150,15 +201,25 @@ read_file(path: str)
   -> The contents of one workspace file.
 
 write_file(path: str, content: str)
-  -> Create or overwrite a workspace file with the full new content.
-     Always send the COMPLETE file, not a fragment.
+  -> Create or overwrite a file, creating any parent folders automatically
+     (e.g. "myapp/src/index.js"). Always send the COMPLETE file, never a
+     fragment or a diff.
+
+create_folder(path: str)
+  -> Make an empty directory (write_file already creates parents, so you
+     rarely need this).
 
 delete_file(path: str)
   -> Remove a file or folder from the workspace.
 
+run_command(command: str)
+  -> Run any shell command with the workspace as the working directory —
+     your terminal. Use it to scaffold projects, install what's missing
+     (pip install X, npm install X), build, and run tests. Returns
+     stdout/stderr/exit code. Long installs are allowed (5 min limit).
+
 run_file(path: str, args?: list)
-  -> Execute a .py (or .js if Node is available) file in the sandbox and
-     return its stdout/stderr/exit code. Use it to test what you wrote.
+  -> Shortcut to execute one .py or .js file and see its output.
 """.strip()
 
 
@@ -187,11 +248,21 @@ def _t_run(args: dict) -> str:
     return run_file(str(args.get("path", "")), raw if isinstance(raw, list) else None)
 
 
+def _t_create_folder(args: dict) -> str:
+    return create_folder(str(args.get("path", "")))
+
+
+def _t_run_command(args: dict) -> str:
+    return run_command(str(args.get("command", "")))
+
+
 TOOLS = {
     "list_files": _t_list,
     "read_file": _t_read,
     "write_file": _t_write,
+    "create_folder": _t_create_folder,
     "delete_file": _t_delete,
+    "run_command": _t_run_command,
     "run_file": _t_run,
 }
 
