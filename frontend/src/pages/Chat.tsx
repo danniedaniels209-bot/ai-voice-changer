@@ -41,6 +41,7 @@ export function Chat() {
   const [messages, setMessages] = useState<DisplayMessage[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
   const [uploading, setUploading] = useState<string | null>(null);
   const [compressUpload, setCompressUpload] = useState(false);
@@ -72,6 +73,7 @@ export function Chat() {
     try {
       const { reply, tool_calls } = await chatWithLlm(
         next.map(({ role, content }) => ({ role, content })),
+        (update) => setProgress(update.status),
       );
       setMessages([
         ...next,
@@ -83,6 +85,7 @@ export function Chat() {
       setInput(text);
     } finally {
       setBusy(false);
+      setProgress("");
     }
   }
 
@@ -212,7 +215,13 @@ export function Chat() {
             </div>
           </div>
         ))}
-        {busy && <div className="text-text-muted text-sm animate-pulse">Thinking...</div>}
+        {busy && (
+          <div className="text-text-muted text-sm animate-pulse">
+            {progress && progress !== "queued" && progress !== "thinking"
+              ? `${progress}…`
+              : "Thinking..."}
+          </div>
+        )}
         <div ref={bottomRef} />
       </div>
 

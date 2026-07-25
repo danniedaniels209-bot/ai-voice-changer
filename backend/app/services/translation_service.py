@@ -61,7 +61,8 @@ def translate_segments(segments: list[SpeechSegment], target_lang: str) -> list[
     raw = llm.generate(
         _SYSTEM.format(language=language),
         numbered,
-        max_new_tokens=min(4000, 60 * len(segments) + 200),
+        # Scales with the transcript so a long video is never half-translated.
+        max_new_tokens=120 * len(segments) + 500,
     )
     translated = _parse_numbered(raw, len(segments))
 
@@ -70,7 +71,7 @@ def translate_segments(segments: list[SpeechSegment], target_lang: str) -> list[
         translated = []
         for s in segments:
             line = llm.generate(
-                _SYSTEM.format(language=language), f"1. {s.text}", max_new_tokens=300
+                _SYSTEM.format(language=language), f"1. {s.text}", max_new_tokens=1000
             )
             parsed = _parse_numbered(line, 1)
             translated.append(parsed[0] if parsed else line.strip())

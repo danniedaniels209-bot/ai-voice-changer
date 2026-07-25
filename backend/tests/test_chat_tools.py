@@ -5,6 +5,43 @@ import json
 from app.scriptgen import tools
 
 
+def test_chat_runs_in_background_so_replies_are_unbounded(monkeypatch):
+    """The endpoint returns a task id immediately and the (potentially long)
+    generation completes on a worker thread — no request-length ceiling."""
+    import time
+
+    from fastapi.testclient import TestClient
+
+    from app.api.routes import scriptgen as sg
+    from app.main import app
+    from app.scriptgen import llm
+
+    long_reply = "word " * 5000  # far beyond the old 4096-token cap
+    monkeypatch.setattr(llm, "availability", lambda: (True, "test"))
+    monkeypatch.setattr(llm, "chat", lambda messages, **kw: long_reply)
+    # The cap handed to the model must be generous, not the old 4096.
+    assert sg.CHAT_MAX_TOKENS >= 16384
+
+    with TestClient(app, raise_server_exceptions=False) as client:
+        started = client.post(
+            "/scriptgen/chat", json={"messages": [{"role": "user", "content": "hi"}]}
+        )
+        assert started.status_code == 200
+        task_id = started.json()["task_id"]
+
+        deadline = time.time() + 20
+        state = {}
+        while time.time() < deadline:
+            state = client.get(f"/scriptgen/chat/{task_id}").json()
+            if state.get("done"):
+                break
+            time.sleep(0.1)
+
+    assert state.get("done") is True
+    assert state["reply"].strip() == long_reply.strip()
+    assert state["error"] is None
+
+
 def test_parse_valid_tool_call():
     reply = '<tool_call>{"tool": "list_jobs", "args": {}}</tool_call>'
     assert tools.parse_tool_call(reply) == ("list_jobs", {})

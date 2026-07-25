@@ -42,12 +42,33 @@ export interface ChatToolCall {
 }
 
 export interface ChatResponse {
+  task_id: string;
+  status: string;
+  done: boolean;
   reply: string;
   tool_calls: ChatToolCall[];
+  error: string | null;
 }
 
-export function chatWithLlm(messages: ChatMessage[]): Promise<ChatResponse> {
-  return apiPost<ChatResponse>("/scriptgen/chat", { messages });
+/**
+ * Start a chat turn and poll until it's done. The model runs in a background
+ * task server-side, so a long answer is never truncated by an HTTP or tunnel
+ * timeout — `onProgress` reports thinking/tool steps as they happen.
+ */
+export async function chatWithLlm(
+  messages: ChatMessage[],
+  onProgress?: (update: ChatResponse) => void,
+): Promise<ChatResponse> {
+  const { task_id } = await apiPost<{ task_id: string }>("/scriptgen/chat", { messages });
+  for (;;) {
+    await new Promise((r) => setTimeout(r, 1200));
+    const state = await apiGet<ChatResponse>(`/scriptgen/chat/${task_id}`);
+    onProgress?.(state);
+    if (state.done) {
+      if (state.error) throw new Error(state.error);
+      return state;
+    }
+  }
 }
 
 export function generateOutline(topic: string, settings: GenSettings): Promise<{ outline: string[] }> {

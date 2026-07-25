@@ -6,12 +6,28 @@ on this machine (cloud sessions: yes; a CPU laptop: no, with the reason).
 
 from __future__ import annotations
 
+import os
+import threading
+import uuid
+
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
+from app.core.errors import CudaUnavailableError, JobNotFoundError
+from app.core.logging import get_logger
 from app.scriptgen import generator, llm
 
+logger = get_logger(__name__)
 router = APIRouter(prefix="/scriptgen", tags=["scriptgen"])
+
+# Generation runs on a worker thread (see /chat), so replies are bounded only
+# by what the model wants to say. This ceiling exists because the generation
+# API requires a number; it is not a product limit.
+CHAT_MAX_TOKENS = int(os.environ.get("AVC_CHAT_MAX_TOKENS", 32768))
+
+# Background chat runs, keyed by task id.
+_chat_tasks: dict[str, dict] = {}
+_chat_lock = threading.Lock()
 
 
 class GenSettings(BaseModel):
@@ -145,47 +161,88 @@ def select_model(request: ModelSelectRequest) -> dict:
     return {"active_model": llm.active_model()}
 
 
-@router.post("/chat")
-def chat(request: ChatRequest) -> dict:
+def _run_chat(task_id: str, history: list[dict]) -> None:
+    """The chat/agent loop on a worker thread. Because nothing here is bound
+    to an HTTP request, generation length is limited only by the model."""
     from app.scriptgen import tools
 
-    messages = [{"role": "system", "content": _chat_system()}]
-    messages += [m.model_dump() for m in request.messages]
-
+    messages = [{"role": "system", "content": _chat_system()}] + history
     tool_trace: list[dict] = []
     reply = ""
-    for _ in range(tools.MAX_TOOL_ROUNDS + 1):
-        # Generation stops at the model's natural end; the ceiling exists
-        # because a reply that takes >100s to generate is killed by the cloud
-        # tunnel anyway — 4096 tokens is the most that reliably arrives.
-        import os as _os
 
-        reply = llm.chat(
-            messages, max_new_tokens=int(_os.environ.get("AVC_CHAT_MAX_TOKENS", "4096"))
-        )
-        call = tools.parse_tool_call(reply)
-        if call is None or len(tool_trace) >= tools.MAX_TOOL_ROUNDS:
-            break
-        name, args = call
-        result = tools.execute(name, args)
-        tool_trace.append({"tool": name, "args": args, "ok": not result.startswith("Error:")})
-        messages.append({"role": "assistant", "content": reply})
-        messages.append({
-            "role": "user",
-            "content": f"<tool_result>\n{result}\n</tool_result>\n"
-                       "Now answer the user's request in plain text "
-                       "(or call another tool if needed).",
-        })
+    def publish(**fields) -> None:
+        with _chat_lock:
+            _chat_tasks[task_id].update(fields)
 
-    final = tools.strip_tool_call(reply) or reply.strip()
-    if not final:
-        # Model burned its whole turn on reasoning/tool syntax — never send
-        # an empty bubble back to the UI.
-        final = (
-            "(The model returned an empty reply — please try again or "
-            "switch models above.)"
-        )
-    return {"reply": final, "tool_calls": tool_trace}
+    try:
+        for _ in range(tools.MAX_TOOL_ROUNDS + 1):
+            publish(status="thinking")
+            reply = llm.chat(messages, max_new_tokens=CHAT_MAX_TOKENS)
+            call = tools.parse_tool_call(reply)
+            if call is None or len(tool_trace) >= tools.MAX_TOOL_ROUNDS:
+                break
+            name, args = call
+            publish(status=f"running {name}")
+            result = tools.execute(name, args)
+            tool_trace.append(
+                {"tool": name, "args": args, "ok": not result.startswith("Error:")}
+            )
+            publish(tool_calls=list(tool_trace))
+            messages.append({"role": "assistant", "content": reply})
+            messages.append({
+                "role": "user",
+                "content": f"<tool_result>\n{result}\n</tool_result>\n"
+                           "Now answer the user's request in plain text "
+                           "(or call another tool if needed).",
+            })
+
+        final = tools.strip_tool_call(reply) or reply.strip()
+        if not final:
+            # Model burned its whole turn on reasoning/tool syntax — never
+            # send an empty bubble back to the UI.
+            final = (
+                "(The model returned an empty reply — please try again or "
+                "switch models above.)"
+            )
+        publish(status="done", done=True, reply=final, tool_calls=list(tool_trace))
+    except Exception as exc:  # noqa: BLE001 — a dead thread must still report
+        logger.exception("Chat agent failed")
+        publish(status="error", done=True, error=str(exc), tool_calls=list(tool_trace))
+
+
+@router.post("/chat")
+def chat(request: ChatRequest) -> dict:
+    """Start a chat turn. Returns a task id immediately — poll
+    GET /scriptgen/chat/{task_id}. Running in the background means a long
+    answer is never cut short by an HTTP or tunnel timeout."""
+    ok, reason = llm.availability()
+    if not ok:
+        raise CudaUnavailableError(reason)
+
+    task_id = uuid.uuid4().hex
+    with _chat_lock:
+        for stale in list(_chat_tasks)[:-9]:
+            _chat_tasks.pop(stale, None)
+        _chat_tasks[task_id] = {
+            "status": "queued", "done": False, "reply": "",
+            "tool_calls": [], "error": None,
+        }
+
+    history = [m.model_dump() for m in request.messages]
+    threading.Thread(
+        target=_run_chat, args=(task_id, history), daemon=True,
+        name=f"chat-{task_id[:8]}",
+    ).start()
+    return {"task_id": task_id}
+
+
+@router.get("/chat/{task_id}")
+def chat_status(task_id: str) -> dict:
+    with _chat_lock:
+        task = _chat_tasks.get(task_id)
+    if task is None:
+        raise JobNotFoundError("That chat run is no longer available.")
+    return {"task_id": task_id, **task}
 
 
 @router.post("/outline")

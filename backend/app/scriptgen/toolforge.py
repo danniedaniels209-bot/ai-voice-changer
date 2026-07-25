@@ -88,7 +88,7 @@ def create_tool(name: str, purpose: str) -> str:
             "       assert the outputs are correct,\n"
             '       then print("TESTS PASSED")\n'
             "Return ONLY the Python code, no explanations.",
-            max_new_tokens=2000,
+            max_new_tokens=8000,
         )
     )
 

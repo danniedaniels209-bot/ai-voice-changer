@@ -37,7 +37,7 @@ def outline(topic: str, settings: dict) -> list[str]:
         f"Create an outline for a script about: {topic}\n\n"
         "Return ONLY 5 to 8 short section titles, one per line, no numbering, "
         "no explanations. Start with an introduction and end with a conclusion.",
-        max_new_tokens=200,
+        max_new_tokens=1000,
     )
     lines = [re.sub(r"^[\d\-.*#)\s]+", "", l).strip() for l in raw.splitlines()]
     return [l for l in lines if l][:8]
@@ -54,7 +54,9 @@ def script(topic: str, outline_sections: list[str], settings: dict) -> str:
         f"Total length: about {words} words (~{per_section} words per section). "
         "Format each section as a markdown heading (# Title) followed by its "
         "narration paragraphs. Write ONLY the script.",
-        max_new_tokens=min(4000, int(words * 2.2)),
+        # Room for the full script plus slack — the model stops when the
+        # script is finished, so this never truncates a legitimate length.
+        max_new_tokens=max(4000, int(words * 4)),
     )
     return raw
 
@@ -90,5 +92,5 @@ def assist(action: str, text: str, settings: dict, tone: str | None = None) -> s
     return llm.generate(
         _system(settings),
         f"{instruction}\n\n{text[:8000]}",
-        max_new_tokens=1500,
+        max_new_tokens=8000,
     )
