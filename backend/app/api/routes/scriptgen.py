@@ -191,15 +191,16 @@ def _run_chat(task_id: str, history: list[dict]) -> None:
             return bool(_chat_tasks.get(task_id, {}).get("cancel"))
 
     llm.set_status_hook(lambda msg: publish(status=msg))
+    llm.set_stream_hook(lambda text: publish(partial_reply=text))
 
     try:
         for _ in range(tools.MAX_TOOL_ROUNDS + 1):
             if cancelled():
-                publish(status="stopped", done=True, reply="Stopped.",
+                publish(status="stopped", done=True, reply="Stopped.", partial_reply="",
                         tool_calls=list(tool_trace))
                 return
             messages = context_manager.compact_if_needed(messages)
-            publish(status="thinking")
+            publish(status="thinking", partial_reply="")
             reply = llm.chat(messages, max_new_tokens=CHAT_MAX_TOKENS)
             call = tools.parse_tool_call(reply)
             if call is None or len(tool_trace) >= tools.MAX_TOOL_ROUNDS:
@@ -227,10 +228,12 @@ def _run_chat(task_id: str, history: list[dict]) -> None:
                 "(The model returned an empty reply — please try again or "
                 "switch models above.)"
             )
-        publish(status="done", done=True, reply=final, tool_calls=list(tool_trace))
+        publish(status="done", done=True, reply=final, partial_reply="",
+                tool_calls=list(tool_trace))
     except Exception as exc:  # noqa: BLE001 — a dead thread must still report
         logger.exception("Chat agent failed")
-        publish(status="error", done=True, error=str(exc), tool_calls=list(tool_trace))
+        publish(status="error", done=True, error=str(exc), partial_reply="",
+                tool_calls=list(tool_trace))
 
 
 @router.post("/chat")
@@ -247,7 +250,7 @@ def chat(request: ChatRequest) -> dict:
         for stale in list(_chat_tasks)[:-9]:
             _chat_tasks.pop(stale, None)
         _chat_tasks[task_id] = {
-            "status": "queued", "done": False, "reply": "",
+            "status": "queued", "done": False, "reply": "", "partial_reply": "",
             "tool_calls": [], "error": None, "cancel": False,
         }
 

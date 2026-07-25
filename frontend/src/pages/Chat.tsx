@@ -43,6 +43,7 @@ export function Chat() {
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState<string>("");
+  const [livePartial, setLivePartial] = useState<string>("");
   const [runId, setRunId] = useState<string | null>(null);
   const [stopping, setStopping] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -76,7 +77,10 @@ export function Chat() {
     try {
       const { reply, tool_calls } = await chatWithLlm(
         next.map(({ role, content }) => ({ role, content })),
-        (update) => setProgress(update.status),
+        (update) => {
+          setProgress(update.status);
+          setLivePartial(update.partial_reply || "");
+        },
         setRunId,
       );
       setMessages([
@@ -90,6 +94,7 @@ export function Chat() {
     } finally {
       setBusy(false);
       setProgress("");
+      setLivePartial("");
       setRunId(null);
       setStopping(false);
     }
@@ -232,10 +237,19 @@ export function Chat() {
           </div>
         ))}
         {busy && (
-          <div className="text-text-muted text-sm animate-pulse">
-            {progress && progress !== "queued" && progress !== "thinking"
-              ? `${progress}…`
-              : "Thinking..."}
+          <div className="flex justify-start">
+            {livePartial ? (
+              <div className="max-w-[85%] rounded-lg px-3 py-2 text-sm whitespace-pre-wrap bg-bg border border-border">
+                {livePartial}
+                <span className="inline-block w-1.5 h-4 bg-accent/70 ml-0.5 align-text-bottom animate-pulse" />
+              </div>
+            ) : (
+              <div className="text-text-muted text-sm animate-pulse">
+                {progress && progress !== "queued" && progress !== "thinking"
+                  ? `${progress}…`
+                  : "Thinking..."}
+              </div>
+            )}
           </div>
         )}
         <div ref={bottomRef} />

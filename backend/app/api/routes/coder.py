@@ -306,10 +306,13 @@ def _run_agent(task_id: str, history: list[dict]) -> None:
     # First reply after switching models can take minutes (multi-GB
     # download) — without this, that looks exactly like a hang.
     llm.set_status_hook(lambda msg: publish(status=msg))
+    # Live token streaming: the reply grows in the task state as the model
+    # writes it, instead of only appearing once the whole thing is done.
+    llm.set_stream_hook(lambda text: publish(partial_reply=text))
 
     def finish_stopped() -> None:
         publish(
-            status="stopped", done=True,
+            status="stopped", done=True, partial_reply="",
             reply=(
                 "Stopped. The files written so far are in the workspace — tell "
                 "me what to do next."
@@ -326,7 +329,7 @@ def _run_agent(task_id: str, history: list[dict]) -> None:
             # round — left unchecked, the prompt grows every iteration until
             # it exhausts VRAM on its own. Compact before every generation.
             messages = context_manager.compact_if_needed(messages)
-            publish(status="thinking")
+            publish(status="thinking", partial_reply="")
             reply = llm.chat(messages, max_new_tokens=MAX_REPLY_TOKENS)
             if cancelled():
                 finish_stopped()
@@ -393,7 +396,7 @@ def _run_agent(task_id: str, history: list[dict]) -> None:
                 if status in ("completed", "blocked") and summary:
                     publish(
                         status="done" if status == "completed" else "blocked",
-                        done=True, reply=summary,
+                        done=True, reply=summary, partial_reply="",
                         tool_calls=list(trace), files=workspace.list_files(),
                     )
                     return
@@ -401,11 +404,11 @@ def _run_agent(task_id: str, history: list[dict]) -> None:
         final = chat_tools.strip_tool_call(reply) or reply.strip()
         if not final:
             final = "(The model returned an empty reply — try again or switch models.)"
-        publish(status="done", done=True, reply=final,
+        publish(status="done", done=True, reply=final, partial_reply="",
                 tool_calls=list(trace), files=workspace.list_files())
     except Exception as exc:  # noqa: BLE001 — a dead thread must still report
         logger.exception("Coder agent failed")
-        publish(status="error", done=True, error=str(exc),
+        publish(status="error", done=True, error=str(exc), partial_reply="",
                 tool_calls=list(trace), files=workspace.list_files())
 
 
@@ -423,7 +426,7 @@ def chat(request: CoderChatRequest) -> dict:
         for stale in list(_tasks)[:-9]:
             _tasks.pop(stale, None)
         _tasks[task_id] = {
-            "status": "queued", "done": False, "reply": "",
+            "status": "queued", "done": False, "reply": "", "partial_reply": "",
             "tool_calls": [], "files": workspace.list_files(), "error": None,
             "cancel": False,
         }

@@ -54,6 +54,8 @@ export interface ChatResponse {
   status: string;
   done: boolean;
   reply: string;
+  /** The reply so far, updated live as the model generates it. */
+  partial_reply: string;
   tool_calls: ChatToolCall[];
   error: string | null;
 }
@@ -71,7 +73,7 @@ export async function chatWithLlm(
   const { task_id } = await apiPost<{ task_id: string }>("/scriptgen/chat", { messages });
   onStart?.(task_id);
   for (;;) {
-    await new Promise((r) => setTimeout(r, 1200));
+    await new Promise((r) => setTimeout(r, 500));
     const state = await apiGet<ChatResponse>(`/scriptgen/chat/${task_id}`);
     onProgress?.(state);
     if (state.done) {

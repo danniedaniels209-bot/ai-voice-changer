@@ -25,6 +25,8 @@ export interface CoderChatResponse {
   status: string;
   done: boolean;
   reply: string;
+  /** The reply so far, updated live as the model generates it. */
+  partial_reply: string;
   tool_calls: CoderToolCall[];
   files: string[];
   error: string | null;
@@ -47,7 +49,7 @@ export async function coderChat(
   const { task_id } = await apiPost<{ task_id: string }>("/coder/chat", { messages });
   onStart?.(task_id);
   for (;;) {
-    await new Promise((r) => setTimeout(r, 800));
+    await new Promise((r) => setTimeout(r, 500));
     const state = await apiGet<CoderChatResponse>(`/coder/chat/${task_id}`);
     onProgress?.(state);
     if (state.done) {

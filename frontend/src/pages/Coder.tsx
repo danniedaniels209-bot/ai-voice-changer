@@ -88,9 +88,9 @@ export function Coder() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
-  const [progress, setProgress] = useState<{ status: string; steps: CoderToolCall[] } | null>(
-    null,
-  );
+  const [progress, setProgress] = useState<
+    { status: string; steps: CoderToolCall[]; partial: string } | null
+  >(null);
   const [uploading, setUploading] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [runId, setRunId] = useState<string | null>(null);
@@ -191,13 +191,17 @@ export function Coder() {
     const next: Message[] = [...messages, { role: "user", content: text }];
     setMessages(next);
     setBusy(true);
-    setProgress({ status: "starting", steps: [] });
+    setProgress({ status: "starting", steps: [], partial: "" });
     setError(null);
     try {
       const res = await coderChat(
         next.map(({ role, content }) => ({ role, content })),
         (update) => {
-          setProgress({ status: update.status, steps: update.tool_calls });
+          setProgress({
+            status: update.status,
+            steps: update.tool_calls,
+            partial: update.partial_reply || "",
+          });
           setFiles(update.files);
         },
         setRunId,
@@ -512,6 +516,12 @@ export function Coder() {
                     ? "Thinking…"
                     : `${progress.status}…`}
                 </div>
+                {progress?.partial && (
+                  <div className="text-xs font-mono whitespace-pre-wrap text-text-muted bg-surface/60 rounded p-2 max-h-40 overflow-y-auto">
+                    {progress.partial}
+                    <span className="inline-block w-1 h-3 bg-accent/70 ml-0.5 align-text-bottom animate-pulse" />
+                  </div>
+                )}
                 {progress?.steps.map((s, i) => (
                   <StepRow key={i} step={s} />
                 ))}

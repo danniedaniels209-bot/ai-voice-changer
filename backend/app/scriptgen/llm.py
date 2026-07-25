@@ -91,6 +91,29 @@ def _notify(message: str) -> None:
             pass
 
 
+# Same per-thread pattern as the status hook, for live token streaming: each
+# background chat/coder task registers a callback that receives the reply
+# text so far, called repeatedly as the model writes it — so the UI can show
+# the model actually thinking instead of a static "Thinking..." label until
+# the whole answer lands at once.
+_stream_local = threading.local()
+
+
+def set_stream_hook(callback) -> None:
+    """Register callback(partial_text: str) on the CURRENT thread, called
+    with the cumulative reply as tokens are generated. None clears it."""
+    _stream_local.callback = callback
+
+
+def _stream(partial_text: str) -> None:
+    callback = getattr(_stream_local, "callback", None)
+    if callback:
+        try:
+            callback(partial_text)
+        except Exception:  # noqa: BLE001 — a UI hiccup must never block generation
+            pass
+
+
 def active_model() -> str:
     return _active_key
 
@@ -329,24 +352,63 @@ def _run(messages: list[dict], max_new_tokens: int) -> str:
         if isinstance(tid, int) and tid >= 0 and tid != getattr(tokenizer, "unk_token_id", None):
             stop_ids.add(tid)
 
-    def _generate():
-        with _lock, torch.no_grad():
-            return model.generate(
-                **inputs,
-                max_new_tokens=max_new_tokens,
-                do_sample=True,
-                temperature=0.7,
-                top_p=0.9,
-                eos_token_id=sorted(stop_ids) if stop_ids else None,
-                pad_token_id=tokenizer.pad_token_id
-                if tokenizer.pad_token_id is not None
-                else tokenizer.eos_token_id,
-            )
+    def _generate() -> str:
+        """Run generate() on a worker thread while streaming decoded text
+        back through _stream() as it's produced, so callers watching the
+        stream hook see the reply appear live instead of all at once at the
+        end. Exceptions raised inside the worker (including CUDA OOM) are
+        captured and re-raised here, on the caller's thread, unchanged."""
+        from transformers import TextIteratorStreamer
+
+        streamer = TextIteratorStreamer(
+            tokenizer, skip_prompt=True, skip_special_tokens=True
+        )
+        gen_kwargs = dict(
+            **inputs,
+            max_new_tokens=max_new_tokens,
+            do_sample=True,
+            temperature=0.7,
+            top_p=0.9,
+            eos_token_id=sorted(stop_ids) if stop_ids else None,
+            pad_token_id=tokenizer.pad_token_id
+            if tokenizer.pad_token_id is not None
+            else tokenizer.eos_token_id,
+            streamer=streamer,
+        )
+        errors: list[BaseException] = []
+
+        def _worker() -> None:
+            try:
+                with _lock, torch.no_grad():
+                    model.generate(**gen_kwargs)
+            except BaseException as exc:  # noqa: BLE001 — re-raised below
+                errors.append(exc)
+            finally:
+                # generate() only calls streamer.end() itself on a clean
+                # finish. If it raises (OOM, any other error), the consumer
+                # loop below would otherwise block on the queue forever —
+                # always release it. Safe to call twice: on the success path
+                # generate() already ended it, so this is a harmless no-op
+                # extra sentinel that's never read.
+                streamer.end()
+
+        worker = threading.Thread(target=_worker, daemon=True)
+        worker.start()
+
+        full_text = ""
+        for chunk in streamer:
+            full_text += chunk
+            _stream(_strip_thinking(full_text) or full_text)
+        worker.join()
+
+        if errors:
+            raise errors[0]
+        return full_text
 
     # Serialized: a 3B model on a T4 is fast enough that queueing beats the
     # VRAM cost of concurrency.
     try:
-        output = _generate()
+        text = _generate()
     except torch.cuda.OutOfMemoryError:
         # Most common cause on a T4: a pipeline model (Whisper/Chatterbox/
         # OpenVoice) from an earlier conversion is still resident. Free it
@@ -357,15 +419,15 @@ def _run(messages: list[dict], max_new_tokens: int) -> str:
         _free_pipeline_gpu_memory()
         torch.cuda.empty_cache()
         try:
-            output = _generate()
+            text = _generate()
         except torch.cuda.OutOfMemoryError as exc:
             torch.cuda.empty_cache()
             raise AppError(
                 f"The GPU ran out of memory generating with {MODELS[_active_key]['label']}. "
-                "This session's T4 has ~15 GB shared between every model — try a smaller "
-                "model (Qwen2.5 3B), or restart the cloud session to clear all GPU memory."
+                "This session's T4 has ~15 GB shared between every model — free up "
+                "memory (finish any running conversion first) or restart the cloud "
+                "session to clear all GPU memory."
             ) from exc
-    text = tokenizer.decode(output[0][inputs["input_ids"].shape[1]:], skip_special_tokens=True)
     return _strip_thinking(text)
 
 

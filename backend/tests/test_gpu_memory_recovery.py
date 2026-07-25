@@ -81,14 +81,35 @@ def test_free_pipeline_gpu_memory_survives_a_broken_service(monkeypatch):
 def test_generation_recovers_from_oom_by_freeing_memory_and_retrying(monkeypatch):
     """First attempt OOMs (as in production, from other cached models eating
     VRAM); after freeing pipeline memory, the retry succeeds."""
-    from app.core.errors import AppError
+    import queue
+
     from app.scriptgen import llm
 
     attempts = {"n": 0}
 
-    class FakeOutput:
-        def __getitem__(self, i):
-            return [1, 2, 3]
+    class FakeStreamer:
+        """Stands in for transformers.TextIteratorStreamer — see
+        test_llm_streaming.py for the same pattern."""
+
+        def __init__(self, tokenizer, **kw):
+            self._q: queue.Queue = queue.Queue()
+
+        def feed(self, text):
+            self._q.put(text)
+
+        def end(self):
+            self._q.put(None)
+
+        def __iter__(self):
+            return self
+
+        def __next__(self):
+            item = self._q.get()
+            if item is None:
+                raise StopIteration
+            return item
+
+    monkeypatch.setattr("transformers.TextIteratorStreamer", FakeStreamer)
 
     class FakeInputs(dict):
         def to(self, device):
@@ -111,9 +132,6 @@ def test_generation_recovers_from_oom_by_freeing_memory_and_retrying(monkeypatch
         def convert_tokens_to_ids(self, tok):
             return -1
 
-        def decode(self, *a, **kw):
-            return "the answer"
-
     class FakeModel:
         device = "cuda"
 
@@ -121,7 +139,9 @@ def test_generation_recovers_from_oom_by_freeing_memory_and_retrying(monkeypatch
             attempts["n"] += 1
             if attempts["n"] == 1:
                 raise torch_module.cuda.OutOfMemoryError("CUDA out of memory")
-            return FakeOutput()
+            streamer = kw["streamer"]
+            streamer.feed("the answer")
+            streamer.end()
 
     import torch as torch_module
 
