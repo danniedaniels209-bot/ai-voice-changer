@@ -104,6 +104,9 @@ export interface HealthResponse {
   ffmpeg_path: string | null;
   hardware: HardwareStatus;
   paths: Record<string, string>;
+  cloud_session: boolean;
+  upload_ttl_minutes: number | null;
+  export_ttl_minutes: number | null;
 }
 
 export type F0Method = "rmvpe" | "harvest" | "crepe" | "pm";

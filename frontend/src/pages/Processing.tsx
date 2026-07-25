@@ -9,7 +9,8 @@ import {
   reexportJob,
 } from "../api/jobs";
 import { API_BASE_URL } from "../api/client";
-import type { JobSegment } from "../types/api";
+import { getHealth } from "../api/health";
+import type { HealthResponse, JobSegment } from "../types/api";
 import { ProgressBar } from "../components/ProgressBar";
 import { StageIndicator } from "../components/StageIndicator";
 import { Button } from "../components/Button";
@@ -30,6 +31,11 @@ export function Processing() {
   const [editorError, setEditorError] = useState<string | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const segAudioRef = useRef<HTMLAudioElement | null>(null);
+  const [health, setHealth] = useState<HealthResponse | null>(null);
+
+  useEffect(() => {
+    getHealth().then(setHealth).catch(() => setHealth(null));
+  }, []);
 
   // Poll as a fallback in case the WebSocket connection drops.
   useEffect(() => {
@@ -216,6 +222,20 @@ export function Processing() {
               </a>
             )}
           </div>
+          {health?.cloud_session && health.export_ttl_minutes != null && (
+            <p className="text-xs text-warning flex items-start gap-1.5">
+              <span aria-hidden>⏳</span>
+              <span>
+                Cloud session — download your files within{" "}
+                <b>
+                  {health.export_ttl_minutes >= 60
+                    ? `${(health.export_ttl_minutes / 60).toFixed(health.export_ttl_minutes % 60 ? 1 : 0)} hours`
+                    : `${health.export_ttl_minutes} minutes`}
+                </b>
+                . Results are deleted automatically after that to keep the session disk clear.
+              </span>
+            </p>
+          )}
           <p className="text-xs text-text-muted break-all">{job.output_path}</p>
         </section>
       )}

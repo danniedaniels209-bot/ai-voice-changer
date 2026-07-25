@@ -18,3 +18,9 @@ class HealthResponse(BaseModel):
     ffmpeg_path: str | None
     hardware: HardwareStatus
     paths: dict[str, str]
+    # Cloud sessions auto-delete uploads/exports to keep the small disk clear;
+    # these let the UI warn users to download results in time. None = local
+    # session (no auto-delete).
+    cloud_session: bool = False
+    upload_ttl_minutes: float | None = None
+    export_ttl_minutes: float | None = None

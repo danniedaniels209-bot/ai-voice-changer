@@ -6,11 +6,14 @@ check the backend is up.
 
 from __future__ import annotations
 
+import os
+
 from fastapi import APIRouter
 
 from app.core.config import Paths, get_settings
 from app.core.hardware import get_hardware_info
 from app.schemas.health import HardwareStatus, HealthResponse
+from app.utils import cleanup
 from app.utils.settings_store import get_effective_device_mode, get_effective_ffmpeg_path
 
 router = APIRouter(tags=["health"])
@@ -21,6 +24,9 @@ def health_check() -> HealthResponse:
     settings = get_settings()
     ffmpeg_path = get_effective_ffmpeg_path()
     hardware = get_hardware_info(get_effective_device_mode())
+    # The upload sweeper only runs on cloud sessions (detected by the auth
+    # token the cloud bootstrap sets) — mirror that here so the UI knows.
+    is_cloud = bool(os.environ.get("AVC_AUTH_TOKEN"))
 
     return HealthResponse(
         status="ok",
@@ -41,4 +47,7 @@ def health_check() -> HealthResponse:
             "ffmpeg_dir": str(Paths.ffmpeg_dir),
             "logs": str(Paths.logs),
         },
+        cloud_session=is_cloud,
+        upload_ttl_minutes=cleanup.UPLOAD_TTL_MINUTES if is_cloud else None,
+        export_ttl_minutes=cleanup.EXPORT_TTL_MINUTES if is_cloud else None,
     )
