@@ -219,6 +219,12 @@ the objective. When the work is done, stop calling tools and deliver.
 """
 
 _RUNTIME_NOTE = """
+Note: wherever the protocol above says to "present", "show", or "deliver" a
+generated file, that means call the write_file tool so it becomes a real
+file in the workspace the user can open and download — not pasting the code
+as a fenced block in your chat reply. A code block in the conversation is
+not a delivered artifact here; only a tool call creates one.
+
 Note: this run's tool loop also enforces the DO NOT LOOP / TASK COMPLETION
 rules above automatically — repeating an identical action pauses the run for
 you even if you don't self-correct, and the runtime periodically asks you,

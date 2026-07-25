@@ -294,6 +294,7 @@ def _run_agent(task_id: str, history: list[dict]) -> None:
     trace: list[dict] = []
     reply = ""
     signatures: list[str] = []
+    nudged_to_write = False
 
     def publish(**fields) -> None:
         with _tasks_lock:
@@ -335,7 +336,27 @@ def _run_agent(task_id: str, history: list[dict]) -> None:
                 finish_stopped()
                 return
             call = chat_tools.parse_tool_call(reply) or _parse_workspace_call(reply)
-            if call is None or len(trace) >= MAX_TOOL_ROUNDS:
+            if call is None:
+                # The model pasted code as a chat reply instead of calling
+                # write_file — happens because SYSTEM_PROMPT.md talks about
+                # "presenting" generated files in the conversation, which
+                # reads (to the model) as "show a code block" rather than
+                # "call the tool that writes it to disk". Catch it once: if
+                # no tool ran at all this turn and the reply contains a
+                # fenced code block, tell it to actually deliver the file
+                # instead of accepting prose as the finished result.
+                if not nudged_to_write and not trace and "```" in reply:
+                    nudged_to_write = True
+                    messages.append({"role": "assistant", "content": reply})
+                    messages.append({
+                        "role": "user",
+                        "content": (
+                            "You wrote code in your reply but didn't create it "
+                            "as a file. Call the write_file tool now to save "
+                            "it for real — don't just show code in the chat."
+                        ),
+                    })
+                    continue
                 break
 
             name, args = call
