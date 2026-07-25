@@ -24,32 +24,62 @@ MODELS: dict[str, dict] = {
         "label": "Qwen2.5 3B (fastest)",
         "download": "~6 GB",
         "quant4": False,
+        "arch": "qwen2",
     },
     "qwen7b": {
         "id": "Qwen/Qwen2.5-7B-Instruct",
         "label": "Qwen2.5 7B (best all-round, 4-bit)",
         "download": "~5 GB in 4-bit",
         "quant4": True,
+        "arch": "qwen2",
     },
     "qwen3-8b": {
         "id": "Qwen/Qwen3-8B",
         "label": "Qwen3 8B (smartest, 4-bit)",
         "download": "~5.5 GB in 4-bit",
         "quant4": True,  # fp16 would need ~16 GB — 4-bit fits a T4
+        "arch": "qwen3",  # needs transformers >= 4.51
     },
     "hermes8b": {
         "id": "NousResearch/Hermes-3-Llama-3.1-8B",
         "label": "Hermes 3 8B (agentic, 4-bit)",
         "download": "~5.5 GB in 4-bit",
         "quant4": True,
+        "arch": "llama",
     },
     "xlam-7b": {
         "id": "Salesforce/xLAM-7b-r",
         "label": "xLAM 7B (tool specialist, 4-bit)",
         "download": "~5 GB in 4-bit",
         "quant4": True,  # 7B fp16 (~14 GB) leaves no room for the pipeline models
+        "arch": "mistral",
     },
 }
+
+
+def architecture_supported(key: str) -> tuple[bool, str]:
+    """
+    Can the installed transformers actually load this model? Checked against
+    the library's own architecture registry, so a model whose type is unknown
+    (e.g. qwen3 on transformers < 4.51) is reported BEFORE the user waits for
+    a multi-GB download that would then fail.
+    """
+    arch = MODELS.get(key, {}).get("arch")
+    if not arch:
+        return True, ""
+    try:
+        from transformers.models.auto.configuration_auto import CONFIG_MAPPING_NAMES
+
+        if arch in CONFIG_MAPPING_NAMES:
+            return True, ""
+        import transformers as _tf
+
+        return False, (
+            f"Needs a newer transformers than this session has "
+            f"({_tf.__version__}) — start a fresh cloud session to use it."
+        )
+    except Exception:  # noqa: BLE001 — never block on an introspection failure
+        return True, ""
 # All models are ungated (no Hugging Face login needed) and download freely.
 DEFAULT_MODEL = "qwen"
 
@@ -95,6 +125,10 @@ def set_model(key: str) -> None:
     global _active_key, _bundle
     if key not in MODELS:
         raise AppError(f"Unknown model '{key}'. Available: {', '.join(MODELS)}")
+    ok, why = architecture_supported(key)
+    if not ok:
+        # Fail here, not after a multi-GB download.
+        raise AppError(f"{MODELS[key]['label']} can't run here. {why}")
     with _lock:
         if key == _active_key:
             return

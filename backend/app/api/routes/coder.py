@@ -82,7 +82,14 @@ def _system_prompt() -> str:
         "breaks. Read the error, then correct it.\n"
         "- When you're finished, summarise what you built, list the key "
         "files, and say how to run it. The user can download everything as a "
-        "zip.\n\n"
+        "zip.\n"
+        "- If the user comes back reporting a problem ('it crashes', 'the "
+        "button does nothing', or a pasted error), treat it as a bug report "
+        "on the project that is already in this workspace: read the relevant "
+        "files, reproduce it with run_command/run_file where you can, fix the "
+        "cause, re-run to confirm, and tell them what was wrong and what you "
+        "changed. Keep iterating until they're happy — the workspace persists "
+        "between messages, so never start over unless asked.\n\n"
         f"Available in this environment: {', '.join(runtimes)}.\n"
         "You can only touch this workspace — never the host application's "
         "own source.\n\n"
@@ -92,16 +99,15 @@ def _system_prompt() -> str:
 
 @router.get("/status")
 def status() -> dict:
+    from app.api.routes.scriptgen import _model_list
+
     ok, reason = llm.availability()
     return {
         "available": ok,
         "reason": reason,
         "model": llm.MODELS[llm.active_model()]["id"],
         "active_model": llm.active_model(),
-        "models": [
-            {"key": k, "label": v["label"], "download": v["download"]}
-            for k, v in llm.MODELS.items()
-        ],
+        "models": _model_list(),
         "files": workspace.list_files(),
     }
 

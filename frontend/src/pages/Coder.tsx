@@ -260,7 +260,10 @@ export function Coder() {
               className="bg-surface border border-border rounded-md px-3 py-2"
             >
               {models.map((m) => (
-                <option key={m.key} value={m.key}>{m.label}</option>
+                <option key={m.key} value={m.key} disabled={m.supported === false}>
+                  {m.label}
+                  {m.supported === false ? " (unavailable this session)" : ""}
+                </option>
               ))}
             </select>
           </label>

@@ -319,7 +319,10 @@ export function Studio() {
                   className="bg-surface border border-border rounded-md px-2 py-1"
                 >
                   {genStatus?.models?.map((m) => (
-                    <option key={m.key} value={m.key}>{m.label}</option>
+                    <option key={m.key} value={m.key} disabled={m.supported === false}>
+                      {m.label}
+                      {m.supported === false ? " (unavailable this session)" : ""}
+                    </option>
                   ))}
                 </select>
               </label>

@@ -11,6 +11,9 @@ export interface LlmModelInfo {
   key: string;
   label: string;
   download: string;
+  /** False when this session's transformers can't load the architecture. */
+  supported?: boolean;
+  reason?: string;
 }
 
 export interface ScriptgenStatus {

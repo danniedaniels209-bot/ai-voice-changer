@@ -170,8 +170,8 @@ export function Chat() {
               className="bg-surface border border-border rounded-md px-3 py-2"
             >
               {models.map((m) => (
-                <option key={m.key} value={m.key}>
-                  {m.label} — {m.download}
+                <option key={m.key} value={m.key} disabled={m.supported === false}>
+                  {m.label} — {m.supported === false ? "unavailable this session" : m.download}
                 </option>
               ))}
             </select>

@@ -139,6 +139,21 @@ class ModelSelectRequest(BaseModel):
     model: str
 
 
+def _model_list() -> list[dict]:
+    """Registry for the pickers, with per-model usability on THIS session."""
+    out = []
+    for key, info in llm.MODELS.items():
+        supported, why = llm.architecture_supported(key)
+        out.append({
+            "key": key,
+            "label": info["label"],
+            "download": info["download"],
+            "supported": supported,
+            "reason": why,
+        })
+    return out
+
+
 @router.get("/status")
 def status() -> dict:
     ok, reason = llm.availability()
@@ -147,10 +162,7 @@ def status() -> dict:
         "reason": reason,
         "model": llm.MODELS[llm.active_model()]["id"],
         "active_model": llm.active_model(),
-        "models": [
-            {"key": key, "label": info["label"], "download": info["download"]}
-            for key, info in llm.MODELS.items()
-        ],
+        "models": _model_list(),
         "actions": list(generator.ACTIONS.keys()),
     }
 
