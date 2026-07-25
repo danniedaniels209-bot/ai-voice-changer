@@ -32,6 +32,29 @@ _model = None
 _model_device: str | None = None
 
 
+def release_model() -> None:
+    """Free the cached Chatterbox model's GPU memory. On a single shared GPU
+    (a T4), this and the chat LLM compete for the same VRAM — called when
+    the LLM needs headroom to load or generate."""
+    global _model, _model_device
+    with _lock:
+        if _model is None:
+            return
+        _model = None
+        _model_device = None
+    try:
+        import gc
+
+        import torch
+
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except ImportError:
+        pass
+    logger.info("Released Chatterbox model from GPU memory.")
+
+
 def _get_model(device: str):
     global _model, _model_device
     with _lock:

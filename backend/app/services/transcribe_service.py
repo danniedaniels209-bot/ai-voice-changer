@@ -38,6 +38,28 @@ class SpeechSegment:
     words: list[WordInfo] | None = None
 
 
+def release_models() -> None:
+    """Free all cached Whisper models' GPU memory — called when the chat LLM
+    needs VRAM headroom on a single shared GPU (a T4)."""
+    global _model_cache
+    with _model_lock:
+        had_any = bool(_model_cache)
+        _model_cache = {}
+    if not had_any:
+        return
+    try:
+        import gc
+
+        import torch
+
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except ImportError:
+        pass
+    logger.info("Released cached Whisper model(s) from GPU memory.")
+
+
 def _get_model(device: str):
     """
     Loads (and caches) the Whisper model. faster-whisper models are heavy;

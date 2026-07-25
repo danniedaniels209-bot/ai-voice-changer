@@ -190,6 +190,29 @@ def availability() -> tuple[bool, str]:
     )
 
 
+def _free_pipeline_gpu_memory() -> None:
+    """
+    Whisper, Chatterbox and OpenVoice each cache a model in GPU memory for
+    the life of the process and never release it on their own — on a T4's
+    single shared ~15 GB, that competes directly with the chat LLM and is
+    the most common cause of a CUDA out-of-memory error after converting a
+    few videos and then opening chat. Best-effort: a missing/broken service
+    must never block loading the LLM.
+    """
+    for module_name, func_name in (
+        ("app.services.chatterbox_service", "release_model"),
+        ("app.services.transcribe_service", "release_models"),
+        ("app.services.expressive_service", "release_converter"),
+    ):
+        try:
+            import importlib
+
+            module = importlib.import_module(module_name)
+            getattr(module, func_name)()
+        except Exception as exc:  # noqa: BLE001 — best-effort reclaim only
+            logger.debug("Could not free %s: %s", module_name, exc)
+
+
 def _get_bundle():
     global _bundle
     with _lock:
@@ -205,6 +228,8 @@ def _get_bundle():
             logger.info(
                 "Loading %s (first use downloads %s)...", model_id, info["download"]
             )
+            if torch.cuda.is_available():
+                _free_pipeline_gpu_memory()
             _notify(
                 f"loading {info['label']} — downloads {info['download']} on "
                 "first use this session, can take a few minutes"
@@ -325,20 +350,42 @@ def _run(messages: list[dict], max_new_tokens: int) -> str:
         if isinstance(tid, int) and tid >= 0 and tid != getattr(tokenizer, "unk_token_id", None):
             stop_ids.add(tid)
 
+    def _generate():
+        with _lock, torch.no_grad():
+            return model.generate(
+                **inputs,
+                max_new_tokens=max_new_tokens,
+                do_sample=True,
+                temperature=0.7,
+                top_p=0.9,
+                eos_token_id=sorted(stop_ids) if stop_ids else None,
+                pad_token_id=tokenizer.pad_token_id
+                if tokenizer.pad_token_id is not None
+                else tokenizer.eos_token_id,
+            )
+
     # Serialized: a 3B model on a T4 is fast enough that queueing beats the
     # VRAM cost of concurrency.
-    with _lock, torch.no_grad():
-        output = model.generate(
-            **inputs,
-            max_new_tokens=max_new_tokens,
-            do_sample=True,
-            temperature=0.7,
-            top_p=0.9,
-            eos_token_id=sorted(stop_ids) if stop_ids else None,
-            pad_token_id=tokenizer.pad_token_id
-            if tokenizer.pad_token_id is not None
-            else tokenizer.eos_token_id,
-        )
+    try:
+        output = _generate()
+    except torch.cuda.OutOfMemoryError:
+        # Most common cause on a T4: a pipeline model (Whisper/Chatterbox/
+        # OpenVoice) from an earlier conversion is still resident. Free it
+        # and retry once before giving up with a clear, actionable message.
+        logger.warning("CUDA OOM during generation — freeing pipeline models and retrying once")
+        _notify("out of memory — freeing other models and retrying...")
+        torch.cuda.empty_cache()
+        _free_pipeline_gpu_memory()
+        torch.cuda.empty_cache()
+        try:
+            output = _generate()
+        except torch.cuda.OutOfMemoryError as exc:
+            torch.cuda.empty_cache()
+            raise AppError(
+                f"The GPU ran out of memory generating with {MODELS[_active_key]['label']}. "
+                "This session's T4 has ~15 GB shared between every model — try a smaller "
+                "model (Qwen2.5 3B), or restart the cloud session to clear all GPU memory."
+            ) from exc
     text = tokenizer.decode(output[0][inputs["input_ids"].shape[1]:], skip_special_tokens=True)
     return _strip_thinking(text)
 

@@ -56,6 +56,28 @@ def _checkpoint_dir() -> Path:
     return path / "converter"
 
 
+def release_converter() -> None:
+    """Free the cached OpenVoice converter's GPU memory — called when the
+    chat LLM needs VRAM headroom on a single shared GPU (a T4)."""
+    global _converter, _converter_device
+    with _lock:
+        if _converter is None:
+            return
+        _converter = None
+        _converter_device = None
+    try:
+        import gc
+
+        import torch
+
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except ImportError:
+        pass
+    logger.info("Released OpenVoice converter from GPU memory.")
+
+
 def _get_converter(device: str):
     """Loads (once per process) the tone color converter."""
     global _converter, _converter_device
