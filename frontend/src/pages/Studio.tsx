@@ -18,6 +18,7 @@ import {
   generateOutline,
   generateScript,
   scriptgenStatus,
+  selectLlmModel,
   type GenSettings,
   type ScriptgenStatus,
 } from "../api/scriptgen";
@@ -74,6 +75,7 @@ export function Studio() {
   const [replace, setReplace] = useState("");
 
   const [genStatus, setGenStatus] = useState<ScriptgenStatus | null>(null);
+  const [genModel, setGenModel] = useState("qwen");
   const [topic, setTopic] = useState("");
   const [genSettings, setGenSettings] = useState<GenSettings>({
     content_type: "YouTube", audience: "General Audience", length: "3m", tone: "Professional",
@@ -87,7 +89,12 @@ export function Studio() {
   const seedsRef = useRef<Record<number, number>>({});
 
   useEffect(() => {
-    scriptgenStatus().then(setGenStatus).catch(() => setGenStatus(null));
+    scriptgenStatus()
+      .then((s) => {
+        setGenStatus(s);
+        if (s.active_model) setGenModel(s.active_model);
+      })
+      .catch(() => setGenStatus(null));
     listVoices().then(setVoices).catch(() => {});
     listCustomVoices().then(setCustomVoices).catch(() => {});
     return () => audioRef.current?.pause();
@@ -105,6 +112,16 @@ export function Studio() {
       setRendered(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  async function handleModelChange(key: string) {
+    setGenModel(key);
+    setError(null);
+    try {
+      await selectLlmModel(key);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
     }
   }
 
@@ -288,9 +305,26 @@ export function Studio() {
           <h3 className="text-sm font-medium">
             Start from a topic <span className="text-text-muted font-normal">(AI Script Studio)</span>
           </h3>
-          {genStatus && !genStatus.available && (
-            <span className="text-xs text-warning">{genStatus.reason}</span>
-          )}
+          <div className="flex items-center gap-3">
+            {genStatus && !genStatus.available && (
+              <span className="text-xs text-warning">{genStatus.reason}</span>
+            )}
+            {(genStatus?.models?.length ?? 0) > 0 && (
+              <label className="flex items-center gap-2 text-xs">
+                <span className="text-text-muted">Model</span>
+                <select
+                  value={genModel}
+                  onChange={(e) => handleModelChange(e.target.value)}
+                  disabled={busy !== null}
+                  className="bg-surface border border-border rounded-md px-2 py-1"
+                >
+                  {genStatus?.models?.map((m) => (
+                    <option key={m.key} value={m.key}>{m.label}</option>
+                  ))}
+                </select>
+              </label>
+            )}
+          </div>
         </div>
         <div className="grid grid-cols-5 gap-2">
           <input
