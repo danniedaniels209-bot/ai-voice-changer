@@ -176,7 +176,7 @@ def select_model(request: ModelSelectRequest) -> dict:
 def _run_chat(task_id: str, history: list[dict]) -> None:
     """The chat/agent loop on a worker thread. Because nothing here is bound
     to an HTTP request, generation length is limited only by the model."""
-    from app.scriptgen import tools
+    from app.scriptgen import context_manager, tools
 
     messages = [{"role": "system", "content": _chat_system()}] + history
     tool_trace: list[dict] = []
@@ -198,6 +198,7 @@ def _run_chat(task_id: str, history: list[dict]) -> None:
                 publish(status="stopped", done=True, reply="Stopped.",
                         tool_calls=list(tool_trace))
                 return
+            messages = context_manager.compact_if_needed(messages)
             publish(status="thinking")
             reply = llm.chat(messages, max_new_tokens=CHAT_MAX_TOKENS)
             call = tools.parse_tool_call(reply)

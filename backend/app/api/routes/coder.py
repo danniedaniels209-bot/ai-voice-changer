@@ -61,7 +61,7 @@ class WriteRequest(BaseModel):
     content: str
 
 
-def _system_prompt() -> str:
+def _system_prompt(task_context: str = "") -> str:
     import shutil as _shutil
 
     files = workspace.list_files()
@@ -74,8 +74,12 @@ def _system_prompt() -> str:
 
     from app.scriptgen import engineering_protocol
 
+    protocol_text, protocol_headings = engineering_protocol.build_prompt(task_context, files)
+    logger.info("Coder system prompt: %d protocol section(s) — %s",
+                len(protocol_headings), ", ".join(protocol_headings))
+
     return (
-        f"{engineering_protocol.text()}\n\n"
+        f"{protocol_text}\n\n"
         "You are working in an isolated project workspace with a real "
         "terminal. You can build complete applications from scratch: create "
         "folders and files, install dependencies, run builds and tests, and "
@@ -281,9 +285,12 @@ def _ask_status(messages: list[dict]) -> tuple[str, str]:
 def _run_agent(task_id: str, history: list[dict]) -> None:
     """The agent loop, run on a worker thread so it can take as long as the
     job actually needs. Progress is published into _tasks for polling."""
-    from app.scriptgen import tools as chat_tools
+    from app.scriptgen import context_manager, tools as chat_tools
 
-    messages = [{"role": "system", "content": _system_prompt()}] + history
+    latest_user_msg = next(
+        (m["content"] for m in reversed(history) if m.get("role") == "user"), ""
+    )
+    messages = [{"role": "system", "content": _system_prompt(latest_user_msg)}] + history
     trace: list[dict] = []
     reply = ""
     signatures: list[str] = []
@@ -315,6 +322,10 @@ def _run_agent(task_id: str, history: list[dict]) -> None:
             if cancelled():
                 finish_stopped()
                 return
+            # A long build appends a tool-call + tool-result pair every
+            # round — left unchecked, the prompt grows every iteration until
+            # it exhausts VRAM on its own. Compact before every generation.
+            messages = context_manager.compact_if_needed(messages)
             publish(status="thinking")
             reply = llm.chat(messages, max_new_tokens=MAX_REPLY_TOKENS)
             if cancelled():
