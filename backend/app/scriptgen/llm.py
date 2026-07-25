@@ -19,40 +19,19 @@ from app.core.logging import get_logger
 logger = get_logger(__name__)
 
 MODELS: dict[str, dict] = {
-    "qwen": {
-        "id": os.environ.get("AVC_LLM_MODEL", "Qwen/Qwen2.5-3B-Instruct"),
-        "label": "Qwen2.5 3B (fastest)",
-        "download": "~6 GB",
-        "quant4": False,
-        "arch": "qwen2",
-    },
-    "qwen7b": {
-        "id": "Qwen/Qwen2.5-7B-Instruct",
-        "label": "Qwen2.5 7B (best all-round, 4-bit)",
+    "coder": {
+        "id": "Qwen/Qwen2.5-Coder-7B-Instruct",
+        "label": "Qwen2.5 Coder 7B — for Coder (4-bit)",
         "download": "~5 GB in 4-bit",
         "quant4": True,
         "arch": "qwen2",
     },
-    "qwen3-8b": {
-        "id": "Qwen/Qwen3-8B",
-        "label": "Qwen3 8B (smartest, 4-bit)",
-        "download": "~5.5 GB in 4-bit",
-        "quant4": True,  # fp16 would need ~16 GB — 4-bit fits a T4
-        "arch": "qwen3",  # needs transformers >= 4.51
-    },
-    "hermes8b": {
+    "chat": {
         "id": "NousResearch/Hermes-3-Llama-3.1-8B",
-        "label": "Hermes 3 8B (agentic, 4-bit)",
+        "label": "Hermes 3 Llama 3.1 8B — for AI Chat (4-bit)",
         "download": "~5.5 GB in 4-bit",
         "quant4": True,
         "arch": "llama",
-    },
-    "xlam-7b": {
-        "id": "Salesforce/xLAM-7b-r",
-        "label": "xLAM 7B (tool specialist, 4-bit)",
-        "download": "~5 GB in 4-bit",
-        "quant4": True,  # 7B fp16 (~14 GB) leaves no room for the pipeline models
-        "arch": "mistral",
     },
 }
 
@@ -80,8 +59,8 @@ def architecture_supported(key: str) -> tuple[bool, str]:
         )
     except Exception:  # noqa: BLE001 — never block on an introspection failure
         return True, ""
-# All models are ungated (no Hugging Face login needed) and download freely.
-DEFAULT_MODEL = "qwen"
+# Both models are ungated (no Hugging Face login needed) and download freely.
+DEFAULT_MODEL = "chat"
 
 # Kept for backward compatibility (status endpoint, logs).
 MODEL_ID = MODELS[DEFAULT_MODEL]["id"]

@@ -80,7 +80,7 @@ const SUGGESTIONS = [
 
 export function Coder() {
   const [status, setStatus] = useState<CoderStatus | null>(null);
-  const [model, setModel] = useState("qwen");
+  const [model, setModel] = useState("coder");
   const [files, setFiles] = useState<string[]>([]);
   const [openPath, setOpenPath] = useState<string | null>(null);
   const [openContent, setOpenContent] = useState("");

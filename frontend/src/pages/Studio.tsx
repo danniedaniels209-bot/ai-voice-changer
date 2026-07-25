@@ -75,7 +75,7 @@ export function Studio() {
   const [replace, setReplace] = useState("");
 
   const [genStatus, setGenStatus] = useState<ScriptgenStatus | null>(null);
-  const [genModel, setGenModel] = useState("qwen");
+  const [genModel, setGenModel] = useState("chat");
   const [topic, setTopic] = useState("");
   const [genSettings, setGenSettings] = useState<GenSettings>({
     content_type: "YouTube", audience: "General Audience", length: "3m", tone: "Professional",

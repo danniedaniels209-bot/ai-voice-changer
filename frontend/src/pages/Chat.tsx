@@ -38,7 +38,7 @@ type DisplayMessage = ChatMessage & { tools?: string[] };
 
 export function Chat() {
   const [status, setStatus] = useState<ScriptgenStatus | null>(null);
-  const [model, setModel] = useState("qwen");
+  const [model, setModel] = useState("chat");
   const [messages, setMessages] = useState<DisplayMessage[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
