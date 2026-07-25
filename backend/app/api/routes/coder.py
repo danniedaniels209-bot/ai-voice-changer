@@ -223,10 +223,30 @@ def _run_agent(task_id: str, history: list[dict]) -> None:
         with _tasks_lock:
             _tasks[task_id].update(fields)
 
+    def cancelled() -> bool:
+        with _tasks_lock:
+            return bool(_tasks.get(task_id, {}).get("cancel"))
+
+    def finish_stopped() -> None:
+        publish(
+            status="stopped", done=True,
+            reply=(
+                "Stopped. The files written so far are in the workspace — tell "
+                "me what to do next."
+            ),
+            tool_calls=list(trace), files=workspace.list_files(),
+        )
+
     try:
         for _ in range(MAX_TOOL_ROUNDS + 1):
+            if cancelled():
+                finish_stopped()
+                return
             publish(status="thinking")
             reply = llm.chat(messages, max_new_tokens=MAX_REPLY_TOKENS)
+            if cancelled():
+                finish_stopped()
+                return
             call = chat_tools.parse_tool_call(reply) or _parse_workspace_call(reply)
             if call is None or len(trace) >= MAX_TOOL_ROUNDS:
                 break
@@ -289,6 +309,7 @@ def chat(request: CoderChatRequest) -> dict:
         _tasks[task_id] = {
             "status": "queued", "done": False, "reply": "",
             "tool_calls": [], "files": workspace.list_files(), "error": None,
+            "cancel": False,
         }
 
     history = [m.model_dump() for m in request.messages]
@@ -297,6 +318,20 @@ def chat(request: CoderChatRequest) -> dict:
         name=f"coder-{task_id[:8]}",
     ).start()
     return {"task_id": task_id}
+
+
+@router.post("/chat/{task_id}/stop")
+def stop_chat(task_id: str) -> dict:
+    """Ask a running agent to stop. It finishes the step it's on (a command
+    already running can't be interrupted mid-flight) and then reports back —
+    whatever it wrote so far stays in the workspace."""
+    with _tasks_lock:
+        task = _tasks.get(task_id)
+        if task is None:
+            raise JobNotFoundError("That coder run is no longer available.")
+        task["cancel"] = True
+        task["status"] = "stopping"
+    return {"stopping": True}
 
 
 @router.get("/chat/{task_id}")

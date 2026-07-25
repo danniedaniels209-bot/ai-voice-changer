@@ -7,6 +7,7 @@ import {
   Package,
   Save,
   Send,
+  Square,
   Wrench,
 } from "lucide-react";
 import { Button } from "../components/Button";
@@ -17,6 +18,7 @@ import {
   coderStatus,
   deleteWorkspaceFile,
   readWorkspaceFile,
+  stopCoderRun,
   uploadToWorkspace,
   workspaceDownloadUrl,
   workspaceZipUrl,
@@ -91,6 +93,8 @@ export function Coder() {
   );
   const [uploading, setUploading] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [runId, setRunId] = useState<string | null>(null);
+  const [stopping, setStopping] = useState(false);
 
   const fileRef = useRef<HTMLInputElement>(null);
   const dirRef = useRef<HTMLInputElement>(null);
@@ -196,6 +200,7 @@ export function Coder() {
           setProgress({ status: update.status, steps: update.tool_calls });
           setFiles(update.files);
         },
+        setRunId,
       );
       setMessages([
         ...next,
@@ -218,6 +223,18 @@ export function Coder() {
     } finally {
       setBusy(false);
       setProgress(null);
+      setRunId(null);
+      setStopping(false);
+    }
+  }
+
+  async function handleStop() {
+    if (!runId) return;
+    setStopping(true);
+    try {
+      await stopCoderRun(runId);
+    } catch {
+      // The run may have just finished on its own — nothing to report.
     }
   }
 
@@ -523,11 +540,19 @@ export function Coder() {
               disabled={!available || busy}
               className="flex-1 bg-surface border border-border rounded-md px-3 py-2 text-sm resize-y disabled:opacity-40"
             />
-            <Button onClick={handleSend} disabled={!available || busy || !input.trim()}>
-              <span className="flex items-center gap-1.5">
-                <Send size={14} /> Send
-              </span>
-            </Button>
+            {busy ? (
+              <Button variant="danger" onClick={handleStop} disabled={!runId || stopping}>
+                <span className="flex items-center gap-1.5">
+                  <Square size={13} /> {stopping ? "Stopping…" : "Stop"}
+                </span>
+              </Button>
+            ) : (
+              <Button onClick={handleSend} disabled={!available || !input.trim()}>
+                <span className="flex items-center gap-1.5">
+                  <Send size={14} /> Send
+                </span>
+              </Button>
+            )}
           </div>
         </div>
       </div>

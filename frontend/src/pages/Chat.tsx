@@ -4,6 +4,7 @@ import {
   chatWithLlm,
   scriptgenStatus,
   selectLlmModel,
+  stopChatRun,
   type ChatMessage,
   type ScriptgenStatus,
 } from "../api/scriptgen";
@@ -42,6 +43,8 @@ export function Chat() {
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState<string>("");
+  const [runId, setRunId] = useState<string | null>(null);
+  const [stopping, setStopping] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [uploading, setUploading] = useState<string | null>(null);
   const [compressUpload, setCompressUpload] = useState(false);
@@ -74,6 +77,7 @@ export function Chat() {
       const { reply, tool_calls } = await chatWithLlm(
         next.map(({ role, content }) => ({ role, content })),
         (update) => setProgress(update.status),
+        setRunId,
       );
       setMessages([
         ...next,
@@ -86,6 +90,8 @@ export function Chat() {
     } finally {
       setBusy(false);
       setProgress("");
+      setRunId(null);
+      setStopping(false);
     }
   }
 
@@ -114,6 +120,16 @@ export function Chat() {
     } catch (err) {
       setUploading(null);
       setError(err instanceof ApiError ? err.message : String(err));
+    }
+  }
+
+  async function handleStop() {
+    if (!runId) return;
+    setStopping(true);
+    try {
+      await stopChatRun(runId);
+    } catch {
+      // Already finished — nothing to stop.
     }
   }
 
@@ -366,9 +382,15 @@ export function Chat() {
           disabled={!available || busy}
           className="flex-1 bg-surface border border-border rounded-md px-3 py-2 text-sm resize-y disabled:opacity-40"
         />
-        <Button onClick={handleSend} disabled={!available || busy || !input.trim()}>
-          Send
-        </Button>
+        {busy ? (
+          <Button variant="danger" onClick={handleStop} disabled={!runId || stopping}>
+            {stopping ? "Stopping…" : "■ Stop"}
+          </Button>
+        ) : (
+          <Button onClick={handleSend} disabled={!available || !input.trim()}>
+            Send
+          </Button>
+        )}
       </div>
     </div>
   );

@@ -95,6 +95,45 @@ def test_steps_carry_live_detail_for_the_activity_feed(client, monkeypatch):
     assert "content" not in steps[0]["args"]
 
 
+def test_stop_ends_a_looping_run_and_keeps_its_work(client, monkeypatch):
+    """A model that keeps calling tools forever must be stoppable, and the
+    files it already wrote must survive."""
+    from app.scriptgen import llm
+
+    call_count = {"n": 0}
+
+    def endless(messages, **kw):
+        call_count["n"] += 1
+        return (
+            '<tool_call>{"tool": "write_file", "args": '
+            f'{{"path": "loop{call_count["n"]}.txt", "content": "x"}}}}</tool_call>'
+        )
+
+    monkeypatch.setattr(llm, "availability", lambda: (True, "test"))
+    monkeypatch.setattr(llm, "chat", endless)
+
+    task_id = client.post(
+        "/coder/chat", json={"messages": [{"role": "user", "content": "go"}]}
+    ).json()["task_id"]
+
+    # Let it get going, then stop it.
+    deadline = time.time() + 10
+    while time.time() < deadline:
+        if client.get(f"/coder/chat/{task_id}").json()["tool_calls"]:
+            break
+        time.sleep(0.05)
+    assert client.post(f"/coder/chat/{task_id}/stop").json()["stopping"] is True
+
+    state = _await_task(client, task_id, timeout=20)
+    assert state["status"] == "stopped"
+    assert "Stopped" in state["reply"]
+    assert state["files"]  # work done before stopping is still there
+
+
+def test_stopping_an_unknown_run_is_reported(client):
+    assert client.post("/coder/chat/nope/stop").status_code == 404
+
+
 def test_chat_rejected_without_llm(client, monkeypatch):
     from app.scriptgen import llm
 

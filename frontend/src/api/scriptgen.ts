@@ -25,6 +25,11 @@ export interface ScriptgenStatus {
   actions: string[];
 }
 
+/** Ask a running chat turn to stop after its current step. */
+export function stopChatRun(taskId: string): Promise<{ stopping: boolean }> {
+  return apiPost<{ stopping: boolean }>(`/scriptgen/chat/${taskId}/stop`);
+}
+
 export function selectLlmModel(model: string): Promise<{ active_model: string }> {
   return apiPost<{ active_model: string }>("/scriptgen/model", { model });
 }
@@ -61,8 +66,10 @@ export interface ChatResponse {
 export async function chatWithLlm(
   messages: ChatMessage[],
   onProgress?: (update: ChatResponse) => void,
+  onStart?: (taskId: string) => void,
 ): Promise<ChatResponse> {
   const { task_id } = await apiPost<{ task_id: string }>("/scriptgen/chat", { messages });
+  onStart?.(task_id);
   for (;;) {
     await new Promise((r) => setTimeout(r, 1200));
     const state = await apiGet<ChatResponse>(`/scriptgen/chat/${task_id}`);

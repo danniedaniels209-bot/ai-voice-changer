@@ -186,8 +186,16 @@ def _run_chat(task_id: str, history: list[dict]) -> None:
         with _chat_lock:
             _chat_tasks[task_id].update(fields)
 
+    def cancelled() -> bool:
+        with _chat_lock:
+            return bool(_chat_tasks.get(task_id, {}).get("cancel"))
+
     try:
         for _ in range(tools.MAX_TOOL_ROUNDS + 1):
+            if cancelled():
+                publish(status="stopped", done=True, reply="Stopped.",
+                        tool_calls=list(tool_trace))
+                return
             publish(status="thinking")
             reply = llm.chat(messages, max_new_tokens=CHAT_MAX_TOKENS)
             call = tools.parse_tool_call(reply)
@@ -237,7 +245,7 @@ def chat(request: ChatRequest) -> dict:
             _chat_tasks.pop(stale, None)
         _chat_tasks[task_id] = {
             "status": "queued", "done": False, "reply": "",
-            "tool_calls": [], "error": None,
+            "tool_calls": [], "error": None, "cancel": False,
         }
 
     history = [m.model_dump() for m in request.messages]
@@ -246,6 +254,17 @@ def chat(request: ChatRequest) -> dict:
         name=f"chat-{task_id[:8]}",
     ).start()
     return {"task_id": task_id}
+
+
+@router.post("/chat/{task_id}/stop")
+def stop_chat(task_id: str) -> dict:
+    with _chat_lock:
+        task = _chat_tasks.get(task_id)
+        if task is None:
+            raise JobNotFoundError("That chat run is no longer available.")
+        task["cancel"] = True
+        task["status"] = "stopping"
+    return {"stopping": True}
 
 
 @router.get("/chat/{task_id}")

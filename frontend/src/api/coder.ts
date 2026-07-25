@@ -42,11 +42,11 @@ export function coderStatus(): Promise<CoderStatus> {
 export async function coderChat(
   messages: { role: "user" | "assistant"; content: string }[],
   onProgress?: (update: CoderChatResponse) => void,
-  signal?: AbortSignal,
+  onStart?: (taskId: string) => void,
 ): Promise<CoderChatResponse> {
   const { task_id } = await apiPost<{ task_id: string }>("/coder/chat", { messages });
+  onStart?.(task_id);
   for (;;) {
-    if (signal?.aborted) throw new Error("Cancelled.");
     await new Promise((r) => setTimeout(r, 800));
     const state = await apiGet<CoderChatResponse>(`/coder/chat/${task_id}`);
     onProgress?.(state);
@@ -55,6 +55,11 @@ export async function coderChat(
       return state;
     }
   }
+}
+
+/** Ask a running agent to stop after its current step. */
+export function stopCoderRun(taskId: string): Promise<{ stopping: boolean }> {
+  return apiPost<{ stopping: boolean }>(`/coder/chat/${taskId}/stop`);
 }
 
 export function uploadToWorkspace(
