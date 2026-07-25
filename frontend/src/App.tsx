@@ -5,6 +5,7 @@ import { Jobs } from "./pages/Jobs";
 import { Studio } from "./pages/Studio";
 import { Chat } from "./pages/Chat";
 import { Guide } from "./pages/Guide";
+import { Coder } from "./pages/Coder";
 import { Processing } from "./pages/Processing";
 import { Models } from "./pages/Models";
 import { Settings } from "./pages/Settings";
@@ -17,6 +18,7 @@ function App() {
           <Route path="/" element={<Home />} />
           <Route path="/studio" element={<Studio />} />
           <Route path="/chat" element={<Chat />} />
+          <Route path="/coder" element={<Coder />} />
           <Route path="/guide" element={<Guide />} />
           <Route path="/processing" element={<Jobs />} />
           <Route path="/processing/:jobId" element={<Processing />} />

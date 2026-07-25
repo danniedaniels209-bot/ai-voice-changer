@@ -5,9 +5,11 @@ TTS-mode conversion (mode='tts' on POST /convert).
 
 from __future__ import annotations
 
+from typing import Literal
+
 from fastapi import APIRouter, File, Form, UploadFile
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.core.config import Paths
 from app.core.errors import AppError
@@ -87,6 +89,45 @@ def custom_voice_preview(name: str) -> FileResponse:
     from app.utils import custom_voices
 
     path = custom_voices.voice_path(f"custom:{name}")
+    return FileResponse(str(path), media_type="audio/wav", filename=path.name)
+
+
+class TryVoiceRequest(BaseModel):
+    voice: str
+    text: str = Field(min_length=1, max_length=400)
+    engine: Literal["edge", "chatterbox"] = "edge"
+    exaggeration: float = Field(default=0.5, ge=0.0, le=1.0)
+
+
+@router.post("/voices/try")
+def try_voice(request: TryVoiceRequest) -> FileResponse:
+    """
+    Audition a voice on the user's OWN words before committing to a full
+    conversion — same engine, voice and expressiveness the conversion will
+    use, and the same content-hash cache, so what you hear is exactly what
+    you'll get.
+    """
+    from app.services import tts_service
+    from app.utils import custom_voices
+
+    if not (
+        custom_voices.is_custom_voice(request.voice)
+        or tts_service.is_known_voice(request.voice)
+        or any(
+            request.voice == vid
+            for voices in tts_service.DUB_VOICES.values()
+            for vid, _label in voices
+        )
+    ):
+        raise AppError(f"Unknown voice '{request.voice}'.", details={"field": "voice"})
+
+    path = tts_service.synthesize_single(
+        Paths.temp / "voice_tryouts",
+        request.text.strip(),
+        request.voice,
+        engine=request.engine,
+        exaggeration=request.exaggeration,
+    )
     return FileResponse(str(path), media_type="audio/wav", filename=path.name)
 
 

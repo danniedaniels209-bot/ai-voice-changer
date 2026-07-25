@@ -7,6 +7,7 @@ import {
   ListVideo,
   Box,
   BookOpen,
+  Code2,
   Settings,
   PanelLeftClose,
   PanelLeftOpen,
@@ -27,6 +28,7 @@ const NAV_GROUPS: Group[] = [
       { to: "/", label: "New Conversion", icon: PlusCircle, end: true },
       { to: "/studio", label: "Script Studio", icon: PenLine },
       { to: "/chat", label: "AI Chat", icon: Sparkles },
+      { to: "/coder", label: "Coder", icon: Code2 },
     ],
   },
   {
@@ -51,6 +53,7 @@ const PAGE_TITLES: Record<string, string> = {
   "/chat": "AI Chat",
   "/processing": "Jobs",
   "/models": "Voice Models",
+  "/coder": "Coder",
   "/guide": "Guide",
   "/settings": "Settings",
 };

@@ -1,0 +1,76 @@
+import { apiGet, apiPost, apiDelete, apiUpload, API_BASE_URL } from "./client";
+import type { LlmModelInfo } from "./scriptgen";
+
+export interface CoderStatus {
+  available: boolean;
+  reason: string;
+  model: string;
+  active_model?: string;
+  models?: LlmModelInfo[];
+  files: string[];
+}
+
+export interface CoderToolCall {
+  tool: string;
+  args: Record<string, unknown>;
+  ok: boolean;
+}
+
+export interface CoderChatResponse {
+  reply: string;
+  tool_calls: CoderToolCall[];
+  files: string[];
+}
+
+export function coderStatus(): Promise<CoderStatus> {
+  return apiGet<CoderStatus>("/coder/status");
+}
+
+export function coderChat(
+  messages: { role: "user" | "assistant"; content: string }[],
+): Promise<CoderChatResponse> {
+  return apiPost<CoderChatResponse>("/coder/chat", { messages });
+}
+
+export function uploadToWorkspace(
+  files: File[],
+  onProgress?: (pct: number) => void,
+): Promise<{ saved: string[]; files: string[] }> {
+  const form = new FormData();
+  for (const f of files) {
+    // webkitRelativePath preserves folder structure when a directory is picked.
+    const rel = (f as File & { webkitRelativePath?: string }).webkitRelativePath;
+    form.append("files", f, rel && rel.length > 0 ? rel : f.name);
+  }
+  return apiUpload<{ saved: string[]; files: string[] }>("/coder/upload", form, onProgress);
+}
+
+export function readWorkspaceFile(path: string): Promise<string> {
+  const token =
+    localStorage.getItem("avc_remote_enabled") === "1"
+      ? localStorage.getItem("avc_remote_token")
+      : null;
+  const headers: Record<string, string> = token ? { "X-AVC-Token": token } : {};
+  return fetch(`${API_BASE_URL}/coder/file?path=${encodeURIComponent(path)}`, {
+    headers,
+  }).then((r) => {
+    if (!r.ok) throw new Error("Could not read that file.");
+    return r.text();
+  });
+}
+
+export function writeWorkspaceFile(path: string, content: string): Promise<{ files: string[] }> {
+  return apiPost<{ files: string[] }>("/coder/file", { path, content });
+}
+
+export function deleteWorkspaceFile(path: string): Promise<{ files: string[] }> {
+  return apiDelete<{ files: string[] }>(`/coder/file?path=${encodeURIComponent(path)}`);
+}
+
+export function clearWorkspace(): Promise<{ files: string[] }> {
+  return apiDelete<{ files: string[] }>("/coder/workspace");
+}
+
+export function workspaceDownloadUrl(path: string): string {
+  return `${API_BASE_URL}/coder/download?path=${encodeURIComponent(path)}`;
+}

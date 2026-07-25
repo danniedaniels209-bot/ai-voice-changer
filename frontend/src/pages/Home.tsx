@@ -4,7 +4,7 @@ import { ChevronDown } from "lucide-react";
 import { FileDropzone } from "../components/FileDropzone";
 import { Button } from "../components/Button";
 import { listModels } from "../api/models";
-import { listVoices, listCustomVoices, listDubLanguages } from "../api/voices";
+import { listVoices, listCustomVoices, listDubLanguages, tryVoice } from "../api/voices";
 import { getSettings, updateSettings } from "../api/settings";
 import { uploadVideo, startConversion } from "../api/jobs";
 import { ApiError, API_BASE_URL } from "../api/client";
@@ -141,6 +141,12 @@ export function Home() {
 
   const [continuity, setContinuity] = useState<ContinuitySettings>(DEFAULT_CONTINUITY);
   const [polish, setPolish] = useState<VoicePolish>(DEFAULT_POLISH);
+  // "Try before you convert": audition candidate voices on your own words.
+  const [tryText, setTryText] = useState("");
+  const [tryVoices, setTryVoices] = useState<string[]>([]);
+  const [tryingVoice, setTryingVoice] = useState<string | null>(null);
+  const [tryError, setTryError] = useState<string | null>(null);
+  const tryAudioRef = useRef<HTMLAudioElement | null>(null);
   const [narrationEngine, setNarrationEngine] = useState<NarrationEngine>("edge");
   const [exaggeration, setExaggeration] = useState(0.5);
   const [chainEnabled, setChainEnabled] = useState(false);
@@ -225,6 +231,36 @@ export function Home() {
     previewAudioRef.current = audio;
     setPreviewingVoice(voiceId);
     audio.play().catch(() => setPreviewingVoice(null));
+  }
+
+  async function playTry(voiceId: string) {
+    tryAudioRef.current?.pause();
+    if (tryingVoice === voiceId) {
+      setTryingVoice(null);
+      return;
+    }
+    const text =
+      tryText.trim() ||
+      (mode === "script" ? script.split(/(?<=[.!?])\s+/)[0]?.trim() : "") ||
+      "This is how your video will sound with this voice.";
+    setTryError(null);
+    setTryingVoice(voiceId);
+    try {
+      const url = await tryVoice({
+        voice: voiceId,
+        text: text.slice(0, 400),
+        engine: narrationEngine,
+        exaggeration,
+      });
+      const audio = new Audio(url);
+      audio.onended = () => setTryingVoice(null);
+      audio.onerror = () => setTryingVoice(null);
+      tryAudioRef.current = audio;
+      await audio.play();
+    } catch (err) {
+      setTryError(err instanceof Error ? err.message : String(err));
+      setTryingVoice(null);
+    }
   }
 
   async function handleStart() {
@@ -581,6 +617,79 @@ export function Home() {
                 delivery is replaced by the AI voice's own style. To keep the original delivery,
                 use Voice model (RVC) with "Preserve Speaking Style".
               </p>
+            )}
+
+            {(mode === "tts" || mode === "script") && (
+              <div className="mt-4 rounded-lg border border-border bg-surface/50 p-4">
+                <div className="text-sm font-medium mb-1">Try before you convert</div>
+                <p className="text-xs text-text-muted mb-3">
+                  Hear a line in the voices you're considering — same engine and
+                  expressiveness the conversion will use — so you don't process the whole
+                  video to find out.
+                </p>
+                <input
+                  value={tryText}
+                  onChange={(e) => setTryText(e.target.value)}
+                  placeholder={
+                    mode === "script"
+                      ? "Leave blank to use your script's first sentence"
+                      : "Type a line to hear (optional)"
+                  }
+                  className="w-full bg-surface border border-border rounded-md px-3 py-2 text-sm mb-3"
+                />
+                <div className="flex flex-wrap gap-2">
+                  {[selectedVoice, ...tryVoices].filter(Boolean).map((vid) => {
+                    const label =
+                      voices.find((v) => v.id === vid)?.label ??
+                      customVoices.find((c) => c.id === vid)?.name ??
+                      vid;
+                    return (
+                      <button
+                        key={vid}
+                        type="button"
+                        onClick={() => playTry(vid)}
+                        className={`rounded-full border px-3 py-1.5 text-xs transition-colors ${
+                          tryingVoice === vid
+                            ? "border-accent bg-accent/10 text-text"
+                            : "border-border bg-surface text-text-muted hover:border-accent/50 hover:text-text"
+                        }`}
+                      >
+                        {tryingVoice === vid ? "■" : "▶"} {label.split("—")[0].trim()}
+                        {vid === selectedVoice && " (selected)"}
+                      </button>
+                    );
+                  })}
+                </div>
+                <div className="flex items-center gap-2 mt-3">
+                  <select
+                    value=""
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      if (v && v !== selectedVoice && !tryVoices.includes(v)) {
+                        setTryVoices((prev) => [...prev, v].slice(-3));
+                      }
+                    }}
+                    className="bg-surface border border-border rounded-md px-2 py-1.5 text-xs"
+                  >
+                    <option value="">+ Compare another voice…</option>
+                    {voices
+                      .filter((v) => v.id !== selectedVoice && !tryVoices.includes(v.id))
+                      .map((v) => (
+                        <option key={v.id} value={v.id}>{v.label}</option>
+                      ))}
+                  </select>
+                  {tryVoices.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setTryVoices([])}
+                      className="text-xs text-text-muted hover:text-text"
+                    >
+                      clear
+                    </button>
+                  )}
+                </div>
+                {tryError && <p className="text-xs text-danger mt-2">{tryError}</p>}
+              </div>
             )}
 
             {(mode === "tts" || mode === "script") && (
