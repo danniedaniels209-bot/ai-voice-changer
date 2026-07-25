@@ -190,6 +190,8 @@ def _run_chat(task_id: str, history: list[dict]) -> None:
         with _chat_lock:
             return bool(_chat_tasks.get(task_id, {}).get("cancel"))
 
+    llm.set_status_hook(lambda msg: publish(status=msg))
+
     try:
         for _ in range(tools.MAX_TOOL_ROUNDS + 1):
             if cancelled():

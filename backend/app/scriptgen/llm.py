@@ -90,6 +90,27 @@ _lock = threading.Lock()
 _active_key = DEFAULT_MODEL
 _bundle = None  # (tokenizer, model) for _active_key
 
+# Per-thread progress callback. A model switch means the FIRST reply after
+# it has to download+load multi-GB weights, which can take minutes — without
+# this, that time is indistinguishable from a hang. Each background chat/
+# coder task sets this on its own worker thread before generating.
+_status_local = threading.local()
+
+
+def set_status_hook(callback) -> None:
+    """Register callback(message: str) on the CURRENT thread, called with
+    human-readable progress while a model loads. Call with None to clear."""
+    _status_local.callback = callback
+
+
+def _notify(message: str) -> None:
+    callback = getattr(_status_local, "callback", None)
+    if callback:
+        try:
+            callback(message)
+        except Exception:  # noqa: BLE001 — a UI hiccup must never block generation
+            pass
+
 
 def active_model() -> str:
     return _active_key
@@ -184,7 +205,12 @@ def _get_bundle():
             logger.info(
                 "Loading %s (first use downloads %s)...", model_id, info["download"]
             )
+            _notify(
+                f"loading {info['label']} — downloads {info['download']} on "
+                "first use this session, can take a few minutes"
+            )
             tokenizer = AutoTokenizer.from_pretrained(model_id)
+            _notify(f"loading {info['label']} — weights")
             wanted_dtype = torch.float16 if torch.cuda.is_available() else torch.float32
             device_map = "auto" if torch.cuda.is_available() else None
 

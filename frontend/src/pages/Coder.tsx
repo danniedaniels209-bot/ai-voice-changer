@@ -508,7 +508,9 @@ export function Coder() {
               <div className="rounded-lg border border-accent/30 bg-bg p-3 space-y-1">
                 <div className="text-sm text-accent animate-pulse flex items-center gap-1.5">
                   <Wrench size={13} />
-                  {progress?.status === "thinking" ? "Thinking…" : "Working…"}
+                  {!progress?.status || progress.status === "thinking"
+                    ? "Thinking…"
+                    : `${progress.status}…`}
                 </div>
                 {progress?.steps.map((s, i) => (
                   <StepRow key={i} step={s} />

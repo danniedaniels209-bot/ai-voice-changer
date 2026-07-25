@@ -95,6 +95,79 @@ def test_steps_carry_live_detail_for_the_activity_feed(client, monkeypatch):
     assert "content" not in steps[0]["args"]
 
 
+def test_identical_repeated_action_pauses_the_run(client, monkeypatch):
+    """A model rewriting the same file forever must be caught automatically —
+    without the user having to press Stop."""
+    from app.api.routes import coder
+    from app.scriptgen import llm
+
+    same_call = (
+        '<tool_call>{"tool": "write_file", "args": '
+        '{"path": "same.txt", "content": "identical"}}</tool_call>'
+    )
+
+    def always_same(messages, **kw):
+        # The out-of-band status check must not itself be answered with a
+        # tool call; reply plainly when asked for STATUS.
+        if messages and "STATUS:" in messages[-1]["content"]:
+            return "STATUS: continue\nSUMMARY: still writing the same file"
+        return same_call
+
+    monkeypatch.setattr(llm, "availability", lambda: (True, "test"))
+    monkeypatch.setattr(llm, "chat", always_same)
+    monkeypatch.setattr(coder, "LOOP_REPEAT_LIMIT", 3)
+
+    task_id = client.post(
+        "/coder/chat", json={"messages": [{"role": "user", "content": "go"}]}
+    ).json()["task_id"]
+    state = _await_task(client, task_id, timeout=30)
+
+    assert state["status"] == "needs_input"
+    assert "repeated the same action" in state["reply"]
+    # It stopped at the limit rather than running to MAX_TOOL_ROUNDS.
+    assert len(state["tool_calls"]) == 3
+
+
+def test_completion_check_ends_the_run_when_model_says_completed(client, monkeypatch):
+    """Even if the model keeps emitting tool calls, the runtime's own check
+    ends the run once the model admits the work is done."""
+    from app.api.routes import coder
+    from app.scriptgen import llm
+
+    counter = {"n": 0}
+
+    def replies(messages, **kw):
+        if messages and "STATUS:" in messages[-1]["content"]:
+            return "STATUS: completed\nSUMMARY: Built app.py; run it with python app.py."
+        counter["n"] += 1
+        return (
+            '<tool_call>{"tool": "write_file", "args": '
+            f'{{"path": "f{counter["n"]}.py", "content": "print({counter["n"]})"}}}}</tool_call>'
+        )
+
+    monkeypatch.setattr(llm, "availability", lambda: (True, "test"))
+    monkeypatch.setattr(llm, "chat", replies)
+    monkeypatch.setattr(coder, "COMPLETION_CHECK_EVERY", 2)
+
+    task_id = client.post(
+        "/coder/chat", json={"messages": [{"role": "user", "content": "build"}]}
+    ).json()["task_id"]
+    state = _await_task(client, task_id, timeout=30)
+
+    assert state["status"] == "done"
+    assert "Built app.py" in state["reply"]
+    assert len(state["tool_calls"]) == 2  # stopped at the first check
+
+
+def test_status_parsing_is_forgiving():
+    from app.api.routes.coder import _parse_status
+
+    assert _parse_status("STATUS: completed\nSUMMARY: done")[0] == "completed"
+    assert _parse_status("status: BLOCKED\nsummary: no network")[0] == "blocked"
+    # Unparseable answers must never end a healthy run.
+    assert _parse_status("I think I'm finished?")[0] == "continue"
+
+
 def test_stop_ends_a_looping_run_and_keeps_its_work(client, monkeypatch):
     """A model that keeps calling tools forever must be stoppable, and the
     files it already wrote must survive."""

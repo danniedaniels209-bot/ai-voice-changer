@@ -28,6 +28,18 @@ router = APIRouter(prefix="/coder", tags=["coder"])
 # backstop, set far above any real task, and overridable.
 MAX_TOOL_ROUNDS = int(os.environ.get("AVC_CODER_MAX_ROUNDS", 200))
 MAX_REPLY_TOKENS = int(os.environ.get("AVC_CODER_MAX_TOKENS", 16384))
+# Loop guard: identical action repeated this many times = no progress.
+LOOP_REPEAT_LIMIT = int(os.environ.get("AVC_CODER_LOOP_LIMIT", 3))
+# Runtime completion check: ask the model whether it's actually finished
+# every N tool calls, rather than trusting it to remember to stop.
+COMPLETION_CHECK_EVERY = int(os.environ.get("AVC_CODER_COMPLETION_CHECK", 5))
+
+_STATUS_QUESTION = (
+    "Pause. Answer in exactly this format and nothing else:\n"
+    "STATUS: continue|completed|blocked\n"
+    "SUMMARY: <one paragraph — if completed, what you built and how to run "
+    "it; if blocked, what is stopping you; if continue, what is still left>"
+)
 
 # Background runs, keyed by task id: the agent works for as long as it needs
 # while the browser polls — no HTTP request (or tunnel) can time it out.
@@ -60,11 +72,14 @@ def _system_prompt() -> str:
     if _shutil.which("git"):
         runtimes.append("git")
 
+    from app.scriptgen import engineering_protocol
+
     return (
-        "You are a software engineer with a real terminal, working in an "
-        "isolated project workspace. You can build complete applications "
-        "from scratch: create folders and files, install dependencies, run "
-        "builds and tests, and iterate until the code actually works.\n\n"
+        f"{engineering_protocol.text()}\n\n"
+        "You are working in an isolated project workspace with a real "
+        "terminal. You can build complete applications from scratch: create "
+        "folders and files, install dependencies, run builds and tests, and "
+        "iterate until the code actually works.\n\n"
         "Tools available to you:\n"
         f"{workspace.TOOL_SPECS}\n\n"
         "To use a tool, reply with ONLY this (no other text):\n"
@@ -83,6 +98,17 @@ def _system_prompt() -> str:
         "- When you're finished, summarise what you built, list the key "
         "files, and say how to run it. The user can download everything as a "
         "zip.\n"
+        "- STOP WHEN DONE. After each tool result ask yourself: is the "
+        "request fulfilled, are the files written, is another call actually "
+        "needed? If not, stop calling tools and write your final answer. "
+        "Never rewrite an identical file, re-read a file you already have, "
+        "recreate an existing folder, or re-run a command that already "
+        "succeeded — repeating an action without new information is a failed "
+        "reasoning loop, not progress. The best run is the shortest one that "
+        "correctly finishes the job.\n"
+        "- If you are blocked (missing information, permission, or an error "
+        "you cannot fix), stop calling tools and say exactly what is "
+        "blocking you.\n"
         "- If the user comes back reporting a problem ('it crashes', 'the "
         "button does nothing', or a pasted error), treat it as a bug report "
         "on the project that is already in this workspace: read the relevant "
@@ -210,6 +236,47 @@ def _describe_step(name: str, args: dict) -> str:
     return name
 
 
+def _signature(name: str, args: dict) -> str:
+    """Identity of an action, for spotting repeats. Content is hashed rather
+    than compared in full so a big file rewrite is still cheap to detect."""
+    import hashlib
+    import json as _json
+
+    payload = _json.dumps(args, sort_keys=True, default=str)[:4000]
+    return f"{name}:{hashlib.sha1(payload.encode()).hexdigest()[:12]}"
+
+
+def _parse_status(raw: str) -> tuple[str, str]:
+    """Read the model's STATUS/SUMMARY answer. Anything unparseable means
+    'keep going' — a malformed check must never end a healthy run."""
+    import re
+
+    status = "continue"
+    m = re.search(r"STATUS:\s*(continue|completed|blocked)", raw, re.IGNORECASE)
+    if m:
+        status = m.group(1).lower()
+    summary = ""
+    m2 = re.search(r"SUMMARY:\s*(.+)", raw, re.IGNORECASE | re.DOTALL)
+    if m2:
+        summary = m2.group(1).strip()
+    return status, summary
+
+
+def _ask_status(messages: list[dict]) -> tuple[str, str]:
+    """Ask the model, out of band, whether the job is actually finished.
+    The question is not added to the conversation, so it can't derail the
+    run; a failure here is treated as 'continue'."""
+    try:
+        raw = llm.chat(
+            messages + [{"role": "user", "content": _STATUS_QUESTION}],
+            max_new_tokens=800,
+        )
+        return _parse_status(raw)
+    except Exception as exc:  # noqa: BLE001 — never fail a run on the check
+        logger.warning("Completion check failed: %s", exc)
+        return "continue", ""
+
+
 def _run_agent(task_id: str, history: list[dict]) -> None:
     """The agent loop, run on a worker thread so it can take as long as the
     job actually needs. Progress is published into _tasks for polling."""
@@ -218,6 +285,7 @@ def _run_agent(task_id: str, history: list[dict]) -> None:
     messages = [{"role": "system", "content": _system_prompt()}] + history
     trace: list[dict] = []
     reply = ""
+    signatures: list[str] = []
 
     def publish(**fields) -> None:
         with _tasks_lock:
@@ -226,6 +294,10 @@ def _run_agent(task_id: str, history: list[dict]) -> None:
     def cancelled() -> bool:
         with _tasks_lock:
             return bool(_tasks.get(task_id, {}).get("cancel"))
+
+    # First reply after switching models can take minutes (multi-GB
+    # download) — without this, that looks exactly like a hang.
+    llm.set_status_hook(lambda msg: publish(status=msg))
 
     def finish_stopped() -> None:
         publish(
@@ -281,6 +353,38 @@ def _run_agent(task_id: str, history: list[dict]) -> None:
                 "content": f"<tool_result>\n{result}\n</tool_result>\n"
                            "Continue, or reply in plain text if you are done.",
             })
+
+            # --- Loop guard: the same action, over and over, is not progress.
+            signatures.append(_signature(name, args))
+            recent = signatures[-LOOP_REPEAT_LIMIT:]
+            if len(recent) == LOOP_REPEAT_LIMIT and len(set(recent)) == 1:
+                logger.warning("Coder loop detected on %s — pausing", name)
+                status, summary = _ask_status(messages)
+                publish(
+                    status="needs_input", done=True,
+                    reply=(
+                        f"I repeated the same action ({name}) "
+                        f"{LOOP_REPEAT_LIMIT} times without making progress, "
+                        "so I paused rather than spinning.\n\n"
+                        f"{summary or 'Nothing new was accomplished by the repeats.'}\n\n"
+                        "Your files are safe in the workspace. Tell me to "
+                        "continue, or point me at what to do differently."
+                    ),
+                    tool_calls=list(trace), files=workspace.list_files(),
+                )
+                return
+
+            # --- Completion check: verify with the model that work remains,
+            # instead of trusting it to remember to stop on its own.
+            if COMPLETION_CHECK_EVERY and len(trace) % COMPLETION_CHECK_EVERY == 0:
+                status, summary = _ask_status(messages)
+                if status in ("completed", "blocked") and summary:
+                    publish(
+                        status="done" if status == "completed" else "blocked",
+                        done=True, reply=summary,
+                        tool_calls=list(trace), files=workspace.list_files(),
+                    )
+                    return
 
         final = chat_tools.strip_tool_call(reply) or reply.strip()
         if not final:
