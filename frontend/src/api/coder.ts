@@ -17,19 +17,40 @@ export interface CoderToolCall {
 }
 
 export interface CoderChatResponse {
+  task_id: string;
+  status: string;
+  done: boolean;
   reply: string;
   tool_calls: CoderToolCall[];
   files: string[];
+  error: string | null;
 }
 
 export function coderStatus(): Promise<CoderStatus> {
   return apiGet<CoderStatus>("/coder/status");
 }
 
-export function coderChat(
+/**
+ * Start an agent run and poll until it finishes. The work happens in a
+ * background task on the server, so a build can take as long as it needs
+ * without any HTTP/tunnel timeout — `onProgress` reports each step live.
+ */
+export async function coderChat(
   messages: { role: "user" | "assistant"; content: string }[],
+  onProgress?: (update: CoderChatResponse) => void,
+  signal?: AbortSignal,
 ): Promise<CoderChatResponse> {
-  return apiPost<CoderChatResponse>("/coder/chat", { messages });
+  const { task_id } = await apiPost<{ task_id: string }>("/coder/chat", { messages });
+  for (;;) {
+    if (signal?.aborted) throw new Error("Cancelled.");
+    await new Promise((r) => setTimeout(r, 1500));
+    const state = await apiGet<CoderChatResponse>(`/coder/chat/${task_id}`);
+    onProgress?.(state);
+    if (state.done) {
+      if (state.error) throw new Error(state.error);
+      return state;
+    }
+  }
 }
 
 export function uploadToWorkspace(

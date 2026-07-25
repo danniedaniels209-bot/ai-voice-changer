@@ -14,6 +14,7 @@ discipline the Tool Forge uses.
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
@@ -24,11 +25,15 @@ from app.core.logging import get_logger
 
 logger = get_logger(__name__)
 
-RUN_TIMEOUT_S = 60
-CMD_TIMEOUT_S = 300  # installs (pip/npm) legitimately take minutes
-MAX_FILE_CHARS = 40_000
-MAX_OUTPUT_CHARS = 8_000
-MAX_LISTING = 400
+# Generous ceilings, not product limits: the work runs in a background task
+# (see routes/coder.py) so nothing is bounded by an HTTP request. These only
+# exist so a runaway loop eventually yields instead of hanging forever, and
+# every one is overridable by env var.
+RUN_TIMEOUT_S = int(os.environ.get("AVC_CODER_RUN_TIMEOUT_S", 3600))       # 1 h
+CMD_TIMEOUT_S = int(os.environ.get("AVC_CODER_CMD_TIMEOUT_S", 7200))       # 2 h
+MAX_FILE_CHARS = int(os.environ.get("AVC_CODER_MAX_FILE_CHARS", 400_000))
+MAX_OUTPUT_CHARS = int(os.environ.get("AVC_CODER_MAX_OUTPUT_CHARS", 60_000))
+MAX_LISTING = int(os.environ.get("AVC_CODER_MAX_LISTING", 5_000))
 # Text-ish files the assistant may read/write. Uploads of other types are
 # stored but not opened as text.
 _TEXT_SUFFIXES = {

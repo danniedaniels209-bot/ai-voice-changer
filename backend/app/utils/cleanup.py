@@ -25,6 +25,8 @@ logger = get_logger(__name__)
 
 UPLOAD_TTL_MINUTES = float(os.environ.get("AVC_UPLOAD_TTL_MINUTES", "90"))
 EXPORT_TTL_MINUTES = float(os.environ.get("AVC_EXPORT_TTL_MINUTES", "120"))
+# Coder workspace: longer, because a build is worked on across a session.
+CODER_TTL_MINUTES = float(os.environ.get("AVC_CODER_TTL_MINUTES", "300"))  # 5 h
 _SWEEP_INTERVAL_SECONDS = 600  # check every 10 minutes
 
 
@@ -143,6 +145,37 @@ def prune_expired_exports(ttl_minutes: float = EXPORT_TTL_MINUTES) -> int:
     return removed
 
 
+def prune_expired_coder_files(ttl_minutes: float = CODER_TTL_MINUTES) -> int:
+    """
+    Delete Coder-workspace files that haven't been touched for ttl_minutes.
+    Age is per file, so a project you're still editing keeps resetting its
+    own clock and only abandoned work is removed. Returns the count deleted.
+    """
+    root = Paths.temp / "coder_workspace"
+    if not root.exists():
+        return 0
+
+    cutoff = time.time() - ttl_minutes * 60
+    removed = 0
+    for path in sorted(root.rglob("*"), reverse=True):  # files before dirs
+        try:
+            if path.is_file():
+                if path.stat().st_mtime < cutoff:
+                    path.unlink()
+                    removed += 1
+            elif path.is_dir() and not any(path.iterdir()):
+                path.rmdir()
+        except OSError as exc:
+            logger.warning("Could not prune coder file %s: %s", path, exc)
+
+    if removed:
+        logger.info(
+            "Auto-deleted %d coder workspace file(s) idle for over %.0f minutes.",
+            removed, ttl_minutes,
+        )
+    return removed
+
+
 def start_upload_sweeper() -> None:
     """
     Start the background TTL sweeper — cloud sessions only (detected by the
@@ -158,12 +191,15 @@ def start_upload_sweeper() -> None:
             try:
                 prune_expired_uploads()
                 prune_expired_exports()
+                prune_expired_coder_files()
             except Exception as exc:  # noqa: BLE001 — sweeper must never die
                 logger.warning("Upload sweeper error: %s", exc)
 
     threading.Thread(target=_loop, daemon=True, name="upload-sweeper").start()
     logger.info(
-        "Cloud session: uploads auto-delete after %.0f min idle, exports after %.0f min.",
+        "Cloud session: uploads auto-delete after %.0f min idle, exports after "
+        "%.0f min, coder workspace after %.0f min.",
         UPLOAD_TTL_MINUTES,
         EXPORT_TTL_MINUTES,
+        CODER_TTL_MINUTES,
     )

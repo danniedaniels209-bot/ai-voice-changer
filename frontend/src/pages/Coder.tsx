@@ -48,6 +48,7 @@ export function Coder() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState<{ status: string; tools: string[] } | null>(null);
   const [uploading, setUploading] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -146,9 +147,19 @@ export function Coder() {
     const next: Message[] = [...messages, { role: "user", content: text }];
     setMessages(next);
     setBusy(true);
+    setProgress({ status: "starting", tools: [] });
     setError(null);
     try {
-      const res = await coderChat(next.map(({ role, content }) => ({ role, content })));
+      const res = await coderChat(
+        next.map(({ role, content }) => ({ role, content })),
+        (update) => {
+          setProgress({
+            status: update.status,
+            tools: update.tool_calls.map((t) => t.tool),
+          });
+          setFiles(update.files);
+        },
+      );
       setMessages([
         ...next,
         { role: "assistant", content: res.reply, tools: res.tool_calls.map((t) => t.tool) },
@@ -169,6 +180,7 @@ export function Coder() {
       setInput(text);
     } finally {
       setBusy(false);
+      setProgress(null);
     }
   }
 
@@ -429,7 +441,29 @@ export function Coder() {
                 </div>
               </div>
             ))}
-            {busy && <div className="text-text-muted text-sm animate-pulse">Working…</div>}
+            {busy && (
+              <div className="text-sm text-text-muted space-y-1">
+                <div className="animate-pulse">
+                  {progress?.status === "thinking"
+                    ? "Thinking…"
+                    : progress?.status?.startsWith("running")
+                      ? `${progress.status}…`
+                      : "Working…"}
+                </div>
+                {progress && progress.tools.length > 0 && (
+                  <div className="text-xs flex items-center gap-1 flex-wrap">
+                    <Wrench size={11} />
+                    <span>
+                      {progress.tools.length} step
+                      {progress.tools.length === 1 ? "" : "s"}: {progress.tools.join(" → ")}
+                    </span>
+                  </div>
+                )}
+                <div className="text-xs text-text-faint">
+                  Long builds keep running — you can leave this page open.
+                </div>
+              </div>
+            )}
             <div ref={bottomRef} />
           </div>
 

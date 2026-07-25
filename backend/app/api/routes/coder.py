@@ -9,25 +9,39 @@ inside temp/coder_workspace — it has no path to the application's own code.
 
 from __future__ import annotations
 
+import os
+import threading
+import uuid
+
 from fastapi import APIRouter, File, UploadFile
 from fastapi.responses import FileResponse, PlainTextResponse
 from pydantic import BaseModel, Field
 
-from app.core.errors import AppError
+from app.core.errors import AppError, CudaUnavailableError, JobNotFoundError
+from app.core.logging import get_logger
 from app.scriptgen import llm, workspace
 
+logger = get_logger(__name__)
 router = APIRouter(prefix="/coder", tags=["coder"])
 
-MAX_TOOL_ROUNDS = 24  # building a whole app takes many steps
+# A build can legitimately take dozens of steps. This is only a runaway-loop
+# backstop, set far above any real task, and overridable.
+MAX_TOOL_ROUNDS = int(os.environ.get("AVC_CODER_MAX_ROUNDS", 200))
+MAX_REPLY_TOKENS = int(os.environ.get("AVC_CODER_MAX_TOKENS", 16384))
+
+# Background runs, keyed by task id: the agent works for as long as it needs
+# while the browser polls — no HTTP request (or tunnel) can time it out.
+_tasks: dict[str, dict] = {}
+_tasks_lock = threading.Lock()
 
 
 class ChatMessage(BaseModel):
     role: str = Field(pattern="^(user|assistant)$")
-    content: str = Field(min_length=1, max_length=40000)
+    content: str = Field(min_length=1)
 
 
 class CoderChatRequest(BaseModel):
-    messages: list[ChatMessage] = Field(min_length=1, max_length=500)
+    messages: list[ChatMessage] = Field(min_length=1)
 
 
 class WriteRequest(BaseModel):
@@ -169,41 +183,88 @@ def clear() -> dict:
     return {"files": []}
 
 
-@router.post("/chat")
-def chat(request: CoderChatRequest) -> dict:
+def _run_agent(task_id: str, history: list[dict]) -> None:
+    """The agent loop, run on a worker thread so it can take as long as the
+    job actually needs. Progress is published into _tasks for polling."""
     from app.scriptgen import tools as chat_tools
 
-    messages = [{"role": "system", "content": _system_prompt()}]
-    messages += [m.model_dump() for m in request.messages]
-
+    messages = [{"role": "system", "content": _system_prompt()}] + history
     trace: list[dict] = []
     reply = ""
-    for _ in range(MAX_TOOL_ROUNDS + 1):
-        reply = llm.chat(messages, max_new_tokens=4096)
-        call = chat_tools.parse_tool_call(reply)
-        # parse_tool_call only knows the video-chat registry; re-parse against
-        # the workspace registry so coder tools are recognised too.
-        if call is None:
-            call = _parse_workspace_call(reply)
-        if call is None or len(trace) >= MAX_TOOL_ROUNDS:
-            break
-        name, args = call
-        result = workspace.execute(name, args)
-        trace.append(
-            {"tool": name, "args": {k: v for k, v in args.items() if k != "content"},
-             "ok": not result.startswith("Error:")}
-        )
-        messages.append({"role": "assistant", "content": reply})
-        messages.append({
-            "role": "user",
-            "content": f"<tool_result>\n{result}\n</tool_result>\n"
-                       "Continue, or reply in plain text if you are done.",
-        })
 
-    final = chat_tools.strip_tool_call(reply) or reply.strip()
-    if not final:
-        final = "(The model returned an empty reply — try again or switch models.)"
-    return {"reply": final, "tool_calls": trace, "files": workspace.list_files()}
+    def publish(**fields) -> None:
+        with _tasks_lock:
+            _tasks[task_id].update(fields)
+
+    try:
+        for _ in range(MAX_TOOL_ROUNDS + 1):
+            publish(status="thinking")
+            reply = llm.chat(messages, max_new_tokens=MAX_REPLY_TOKENS)
+            call = chat_tools.parse_tool_call(reply) or _parse_workspace_call(reply)
+            if call is None or len(trace) >= MAX_TOOL_ROUNDS:
+                break
+
+            name, args = call
+            publish(status=f"running {name}")
+            result = workspace.execute(name, args)
+            trace.append({
+                "tool": name,
+                "args": {k: v for k, v in args.items() if k != "content"},
+                "ok": not result.startswith("Error:"),
+            })
+            publish(tool_calls=list(trace), files=workspace.list_files())
+
+            messages.append({"role": "assistant", "content": reply})
+            messages.append({
+                "role": "user",
+                "content": f"<tool_result>\n{result}\n</tool_result>\n"
+                           "Continue, or reply in plain text if you are done.",
+            })
+
+        final = chat_tools.strip_tool_call(reply) or reply.strip()
+        if not final:
+            final = "(The model returned an empty reply — try again or switch models.)"
+        publish(status="done", done=True, reply=final,
+                tool_calls=list(trace), files=workspace.list_files())
+    except Exception as exc:  # noqa: BLE001 — a dead thread must still report
+        logger.exception("Coder agent failed")
+        publish(status="error", done=True, error=str(exc),
+                tool_calls=list(trace), files=workspace.list_files())
+
+
+@router.post("/chat")
+def chat(request: CoderChatRequest) -> dict:
+    """Start an agent run. Returns immediately with a task id — poll
+    GET /coder/chat/{task_id} for progress and the final reply."""
+    ok, reason = llm.availability()
+    if not ok:
+        raise CudaUnavailableError(reason)
+
+    task_id = uuid.uuid4().hex
+    with _tasks_lock:
+        # Keep the last few runs only; each holds just text.
+        for stale in list(_tasks)[:-9]:
+            _tasks.pop(stale, None)
+        _tasks[task_id] = {
+            "status": "queued", "done": False, "reply": "",
+            "tool_calls": [], "files": workspace.list_files(), "error": None,
+        }
+
+    history = [m.model_dump() for m in request.messages]
+    threading.Thread(
+        target=_run_agent, args=(task_id, history), daemon=True,
+        name=f"coder-{task_id[:8]}",
+    ).start()
+    return {"task_id": task_id}
+
+
+@router.get("/chat/{task_id}")
+def chat_status(task_id: str) -> dict:
+    with _tasks_lock:
+        task = _tasks.get(task_id)
+    if task is None:
+        raise JobNotFoundError("That coder run is no longer available.")
+    return {"task_id": task_id, **task}
 
 
 def _parse_workspace_call(reply: str):

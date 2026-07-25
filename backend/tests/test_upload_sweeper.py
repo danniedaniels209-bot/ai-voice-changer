@@ -93,6 +93,32 @@ def test_strip_thinking_never_returns_empty():
     assert llm._strip_thinking("Before<think>dangling") == "Before"
 
 
+def test_coder_workspace_files_expire_after_ttl(tmp_path, monkeypatch):
+    from app.core.config import Paths
+
+    monkeypatch.setattr(Paths, "temp", tmp_path)
+    ws = tmp_path / "coder_workspace" / "app"
+    ws.mkdir(parents=True)
+    old = ws / "stale.py"
+    old.write_text("x", encoding="utf-8")
+    stamp = time.time() - 6 * 3600  # 6 h ago, past the 5 h window
+    os.utime(old, (stamp, stamp))
+    fresh = ws / "active.py"
+    fresh.write_text("y", encoding="utf-8")
+
+    removed = cleanup.prune_expired_coder_files(ttl_minutes=300)
+    assert removed == 1
+    assert not old.exists()
+    assert fresh.exists()  # still being worked on
+
+
+def test_coder_prune_is_safe_when_workspace_missing(tmp_path, monkeypatch):
+    from app.core.config import Paths
+
+    monkeypatch.setattr(Paths, "temp", tmp_path)
+    assert cleanup.prune_expired_coder_files() == 0
+
+
 def test_sweeper_only_starts_on_cloud(monkeypatch):
     import threading
 
