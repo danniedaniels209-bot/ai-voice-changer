@@ -108,6 +108,25 @@ def create_folder(rel_path: str) -> str:
     return f"Created folder {rel_path}."
 
 
+# write_file/delete_file/run_file are hard-confined to the workspace via
+# resolve() and can never reach the app's own source. run_command is a real
+# shell, though — the one place a stray `cat ../../backend/... >file` could
+# in principle touch project source, including its own system prompt. Refuse
+# outright rather than relying on the model choosing not to.
+_PROTECTED_MARKERS = ("system_prompt.md", "engineering_protocol.py")
+
+
+def _touches_protected_source(command: str) -> bool:
+    # Normalize both sides to forward slashes before comparing — Windows
+    # paths use backslashes, and comparing mixed separators silently never
+    # matches.
+    lowered = command.lower().replace("\\", "/")
+    if any(marker in lowered for marker in _PROTECTED_MARKERS):
+        return True
+    root = str(Paths.root.resolve()).lower().replace("\\", "/")
+    return root in lowered
+
+
 def run_command(command: str, timeout: int | None = None) -> str:
     """
     Run a shell command with the workspace as its working directory — the
@@ -116,10 +135,19 @@ def run_command(command: str, timeout: int | None = None) -> str:
 
     Confined by cwd and a timeout, and it can only be reached through this
     workspace API; output is capped so a chatty build can't flood the model.
+    Commands referencing the application's own source (its project root, or
+    its system prompt by name) are refused outright — see
+    _touches_protected_source.
     """
     command = (command or "").strip()
     if not command:
         raise ValueError("run_command needs a command string.")
+    if _touches_protected_source(command):
+        raise ValueError(
+            "Refused: this command references the application's own source "
+            "(including its system prompt), which is outside the coder "
+            "workspace and cannot be read, run, or modified from here."
+        )
     try:
         proc = subprocess.run(
             command,

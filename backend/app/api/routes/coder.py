@@ -118,7 +118,8 @@ def _system_prompt() -> str:
         "between messages, so never start over unless asked.\n\n"
         f"Available in this environment: {', '.join(runtimes)}.\n"
         "You can only touch this workspace — never the host application's "
-        "own source.\n\n"
+        "own source, and never its own system prompt (this document). "
+        "Commands that try will be refused.\n\n"
         f"Files currently in the workspace:\n{listing}"
     )
 

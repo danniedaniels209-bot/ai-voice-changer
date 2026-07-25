@@ -110,6 +110,32 @@ def test_run_command_reports_failures_and_needs_input():
         workspace.run_command("   ")
 
 
+def test_run_command_refuses_to_touch_the_system_prompt():
+    for cmd in (
+        "cat backend/app/scriptgen/prompts/SYSTEM_PROMPT.md",
+        "echo pwned > ../../backend/app/scriptgen/prompts/SYSTEM_PROMPT.md",
+        "rm backend/app/scriptgen/engineering_protocol.py",
+    ):
+        with pytest.raises(ValueError, match="Refused"):
+            workspace.run_command(cmd)
+
+
+def test_run_command_refuses_absolute_project_root_reference():
+    root = str(workspace.Paths.root.resolve())
+    with pytest.raises(ValueError, match="Refused"):
+        workspace.run_command(f"ls {root}")
+
+
+def test_run_command_does_not_over_block_unrelated_commands():
+    """The word 'system' alone, or an unrelated file, must not trip the
+    guard — only the app's own source/system prompt should."""
+    workspace.write_file("notes.txt", "hello")
+    out = workspace.run_command("python -c \"import platform; print(platform.system())\"")
+    assert "Refused" not in out
+    out2 = workspace.run_command("cat notes.txt")
+    assert "hello" in out2
+
+
 def test_run_command_times_out():
     out = workspace.run_command("python -c \"import time; time.sleep(30)\"", timeout=3)
     assert "Timed out" in out

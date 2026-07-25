@@ -42,3 +42,32 @@ def test_engineering_protocol_is_non_empty_and_toggleable(monkeypatch):
     core = ep.text()
     assert len(core) < len(full)
     assert "PRIORITIES" in core
+
+
+def test_protocol_file_exists_in_repo_and_is_the_real_source():
+    from app.scriptgen import engineering_protocol as ep
+
+    assert ep._PROMPT_FILE.exists(), "SYSTEM_PROMPT.md must ship in the repo"
+    on_disk = ep._PROMPT_FILE.read_text(encoding="utf-8")
+    assert on_disk in ep.text()  # text() = file content + runtime note, unedited
+
+
+def test_protocol_is_read_fresh_every_call_not_cached(tmp_path, monkeypatch):
+    from app.scriptgen import engineering_protocol as ep
+
+    scratch = tmp_path / "SYSTEM_PROMPT.md"
+    scratch.write_text("first version", encoding="utf-8")
+    monkeypatch.setattr(ep, "_PROMPT_FILE", scratch)
+    monkeypatch.delenv("AVC_CODER_FULL_PROTOCOL", raising=False)
+
+    assert "first version" in ep.text()
+    scratch.write_text("edited live", encoding="utf-8")
+    assert "edited live" in ep.text()  # no restart, no cache, sees the edit
+
+
+def test_missing_protocol_file_falls_back_instead_of_crashing(tmp_path, monkeypatch):
+    from app.scriptgen import engineering_protocol as ep
+
+    monkeypatch.setattr(ep, "_PROMPT_FILE", tmp_path / "does_not_exist.md")
+    monkeypatch.delenv("AVC_CODER_FULL_PROTOCOL", raising=False)
+    assert ep.text() == ep.CORE
