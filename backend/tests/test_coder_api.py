@@ -67,6 +67,34 @@ def test_agent_loop_executes_tools_and_reports_progress(client, monkeypatch):
     assert "app/main.py" in state["files"]
 
 
+def test_steps_carry_live_detail_for_the_activity_feed(client, monkeypatch):
+    """Each step must describe itself and include its output, so the UI can
+    show what the agent is doing as it happens."""
+    from app.scriptgen import llm
+
+    replies = iter([
+        '<tool_call>{"tool": "write_file", "args": '
+        '{"path": "hi.py", "content": "print(\'hi\')"}}</tool_call>',
+        '<tool_call>{"tool": "run_file", "args": {"path": "hi.py"}}</tool_call>',
+        "Built and ran it.",
+    ])
+    monkeypatch.setattr(llm, "availability", lambda: (True, "test"))
+    monkeypatch.setattr(llm, "chat", lambda messages, **kw: next(replies))
+
+    task_id = client.post(
+        "/coder/chat", json={"messages": [{"role": "user", "content": "make hi.py"}]}
+    ).json()["task_id"]
+    state = _await_task(client, task_id)
+
+    steps = state["tool_calls"]
+    assert [s["tool"] for s in steps] == ["write_file", "run_file"]
+    assert steps[0]["note"].startswith("Writing hi.py")
+    assert all(s["running"] is False and s["ok"] is True for s in steps)
+    assert "hi" in steps[1]["output"]  # the program's real stdout
+    # write_file's content is never echoed back (it would flood the feed).
+    assert "content" not in steps[0]["args"]
+
+
 def test_chat_rejected_without_llm(client, monkeypatch):
     from app.scriptgen import llm
 

@@ -22,14 +22,52 @@ import {
   workspaceZipUrl,
   writeWorkspaceFile,
   type CoderStatus,
+  type CoderToolCall,
 } from "../api/coder";
 import { selectLlmModel } from "../api/scriptgen";
 
 type Message = {
   role: "user" | "assistant";
   content: string;
-  tools?: string[];
+  steps?: CoderToolCall[];
 };
+
+/** One line of the agent's activity — what it's doing, and what came back. */
+function StepRow({ step }: { step: CoderToolCall }) {
+  const [open, setOpen] = useState(false);
+  const icon = step.running ? "◌" : step.ok === false ? "✕" : "✓";
+  const tone = step.running
+    ? "text-accent"
+    : step.ok === false
+      ? "text-danger"
+      : "text-success";
+  return (
+    <div className="text-xs">
+      <button
+        type="button"
+        onClick={() => step.output && setOpen((o) => !o)}
+        className={`w-full text-left flex items-start gap-2 py-0.5 rounded hover:bg-surface-hover/50 transition-colors ${
+          step.output ? "cursor-pointer" : "cursor-default"
+        }`}
+      >
+        <span className={`${tone} ${step.running ? "animate-pulse" : ""} shrink-0`}>
+          {icon}
+        </span>
+        <span className="font-mono text-text-muted truncate flex-1">
+          {step.note ?? step.tool}
+        </span>
+        {step.output && (
+          <span className="text-text-faint shrink-0">{open ? "hide" : "output"}</span>
+        )}
+      </button>
+      {open && step.output && (
+        <pre className="mt-1 mb-2 ml-5 p-2 rounded bg-bg border border-border text-[11px] font-mono whitespace-pre-wrap max-h-48 overflow-y-auto">
+          {step.output}
+        </pre>
+      )}
+    </div>
+  );
+}
 
 const SUGGESTIONS = [
   "Build a to-do web app with a Flask backend.",
@@ -48,7 +86,9 @@ export function Coder() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
-  const [progress, setProgress] = useState<{ status: string; tools: string[] } | null>(null);
+  const [progress, setProgress] = useState<{ status: string; steps: CoderToolCall[] } | null>(
+    null,
+  );
   const [uploading, setUploading] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -147,22 +187,19 @@ export function Coder() {
     const next: Message[] = [...messages, { role: "user", content: text }];
     setMessages(next);
     setBusy(true);
-    setProgress({ status: "starting", tools: [] });
+    setProgress({ status: "starting", steps: [] });
     setError(null);
     try {
       const res = await coderChat(
         next.map(({ role, content }) => ({ role, content })),
         (update) => {
-          setProgress({
-            status: update.status,
-            tools: update.tool_calls.map((t) => t.tool),
-          });
+          setProgress({ status: update.status, steps: update.tool_calls });
           setFiles(update.files);
         },
       );
       setMessages([
         ...next,
-        { role: "assistant", content: res.reply, tools: res.tool_calls.map((t) => t.tool) },
+        { role: "assistant", content: res.reply, steps: res.tool_calls },
       ]);
       setFiles(res.files);
       // The assistant may have rewritten the file currently on screen.
@@ -432,9 +469,15 @@ export function Coder() {
                     m.role === "user" ? "bg-accent text-white" : "bg-bg border border-border"
                   }`}
                 >
-                  {m.tools && m.tools.length > 0 && (
-                    <div className="text-xs text-text-muted italic mb-1.5 flex items-center gap-1">
-                      <Wrench size={11} /> {m.tools.join(" → ")}
+                  {m.steps && m.steps.length > 0 && (
+                    <div className="mb-2 pb-2 border-b border-border space-y-0.5">
+                      <div className="text-xs text-text-muted flex items-center gap-1 mb-1">
+                        <Wrench size={11} /> {m.steps.length} step
+                        {m.steps.length === 1 ? "" : "s"}
+                      </div>
+                      {m.steps.map((s, si) => (
+                        <StepRow key={si} step={s} />
+                      ))}
                     </div>
                   )}
                   {m.content}
@@ -442,25 +485,16 @@ export function Coder() {
               </div>
             ))}
             {busy && (
-              <div className="text-sm text-text-muted space-y-1">
-                <div className="animate-pulse">
-                  {progress?.status === "thinking"
-                    ? "Thinking…"
-                    : progress?.status?.startsWith("running")
-                      ? `${progress.status}…`
-                      : "Working…"}
+              <div className="rounded-lg border border-accent/30 bg-bg p-3 space-y-1">
+                <div className="text-sm text-accent animate-pulse flex items-center gap-1.5">
+                  <Wrench size={13} />
+                  {progress?.status === "thinking" ? "Thinking…" : "Working…"}
                 </div>
-                {progress && progress.tools.length > 0 && (
-                  <div className="text-xs flex items-center gap-1 flex-wrap">
-                    <Wrench size={11} />
-                    <span>
-                      {progress.tools.length} step
-                      {progress.tools.length === 1 ? "" : "s"}: {progress.tools.join(" → ")}
-                    </span>
-                  </div>
-                )}
-                <div className="text-xs text-text-faint">
-                  Long builds keep running — you can leave this page open.
+                {progress?.steps.map((s, i) => (
+                  <StepRow key={i} step={s} />
+                ))}
+                <div className="text-xs text-text-faint pt-1">
+                  Runs in the background — long builds keep going.
                 </div>
               </div>
             )}

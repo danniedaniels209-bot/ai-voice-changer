@@ -34,7 +34,7 @@ requests==2.32.3
 
 # Fairseq-free content encoder (replaces rvc-python's fairseq-based HuBERT
 # loader). See app/rvc_lib/patch.py.
-transformers==4.47.1
+transformers>=4.51.0,<5.0.0  # >=4.51 required for Qwen3 architecture
 
 # rvc-python provides the actual RVC-Project synthesizer network + inference
 # pipeline code. It must be installed SEPARATELY with --no-deps, because its

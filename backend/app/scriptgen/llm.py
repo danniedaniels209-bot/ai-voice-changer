@@ -181,6 +181,18 @@ def _get_bundle():
                 model = AutoModelForCausalLM.from_pretrained(
                     model_id, dtype=wanted_dtype, **kwargs
                 )
+            except ValueError as exc:
+                # A newer architecture (e.g. Qwen3) on an older transformers.
+                # Say so plainly instead of leaking a traceback to the UI.
+                if "does not recognize this architecture" in str(exc) or "model type" in str(exc):
+                    import transformers as _tf
+
+                    raise AppError(
+                        f"This session's transformers ({_tf.__version__}) is too old for "
+                        f"{model_id}. Start a fresh cloud session to pick up the newer "
+                        "version, or choose another model (Qwen2.5 3B works everywhere)."
+                    ) from exc
+                raise
             model.eval()
             _bundle = (tokenizer, model)
         return _bundle

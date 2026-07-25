@@ -183,6 +183,27 @@ def clear() -> dict:
     return {"files": []}
 
 
+def _describe_step(name: str, args: dict) -> str:
+    """One human-readable line per action, for the live activity feed."""
+    path = str(args.get("path", ""))
+    if name == "write_file":
+        lines = str(args.get("content", "")).count("\n") + 1
+        return f"Writing {path} ({lines} lines)"
+    if name == "read_file":
+        return f"Reading {path}"
+    if name == "create_folder":
+        return f"Creating folder {path}"
+    if name == "delete_file":
+        return f"Deleting {path}"
+    if name == "run_command":
+        return f"$ {args.get('command', '')}"
+    if name == "run_file":
+        return f"Running {path}"
+    if name == "list_files":
+        return "Listing the workspace"
+    return name
+
+
 def _run_agent(task_id: str, history: list[dict]) -> None:
     """The agent loop, run on a worker thread so it can take as long as the
     job actually needs. Progress is published into _tasks for polling."""
@@ -205,13 +226,27 @@ def _run_agent(task_id: str, history: list[dict]) -> None:
                 break
 
             name, args = call
-            publish(status=f"running {name}")
-            result = workspace.execute(name, args)
-            trace.append({
+            # Publish the step BEFORE running it, so the UI shows what the
+            # agent is doing right now (not only once it has finished).
+            step = {
                 "tool": name,
+                "target": str(args.get("path") or args.get("command") or ""),
                 "args": {k: v for k, v in args.items() if k != "content"},
-                "ok": not result.startswith("Error:"),
-            })
+                "note": _describe_step(name, args),
+                "running": True,
+                "ok": None,
+                "output": "",
+            }
+            trace.append(step)
+            publish(status=f"running {name}", tool_calls=list(trace))
+
+            result = workspace.execute(name, args)
+            step.update(
+                running=False,
+                ok=not result.startswith("Error:"),
+                # Enough to follow along without flooding the browser.
+                output=result[:4000],
+            )
             publish(tool_calls=list(trace), files=workspace.list_files())
 
             messages.append({"role": "assistant", "content": reply})

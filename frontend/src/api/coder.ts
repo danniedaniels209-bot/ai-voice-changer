@@ -12,8 +12,12 @@ export interface CoderStatus {
 
 export interface CoderToolCall {
   tool: string;
+  target?: string;
+  note?: string;
   args: Record<string, unknown>;
-  ok: boolean;
+  running?: boolean;
+  ok: boolean | null;
+  output?: string;
 }
 
 export interface CoderChatResponse {
@@ -43,7 +47,7 @@ export async function coderChat(
   const { task_id } = await apiPost<{ task_id: string }>("/coder/chat", { messages });
   for (;;) {
     if (signal?.aborted) throw new Error("Cancelled.");
-    await new Promise((r) => setTimeout(r, 1500));
+    await new Promise((r) => setTimeout(r, 800));
     const state = await apiGet<CoderChatResponse>(`/coder/chat/${task_id}`);
     onProgress?.(state);
     if (state.done) {
