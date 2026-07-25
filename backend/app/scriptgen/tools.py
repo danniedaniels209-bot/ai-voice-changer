@@ -60,6 +60,19 @@ run_custom_tool(name: str, args: dict)
 
 list_custom_tools()
   -> Names + descriptions of the tools you have built so far.
+
+search_project(query: str)
+  -> Search THIS app's own source code (read-only) for a word or phrase.
+     Use it to answer "where do I find X?", "does the app support Y?",
+     "how does Z work?" — then tell the user the page/button in plain
+     words, not file paths, unless they asked for code.
+
+read_project_file(path: str)
+  -> Read one project source file (read-only), e.g.
+     "frontend/src/pages/Home.tsx" or "docs/REDESIGN.md".
+
+list_project_files(subdir?: str)
+  -> List the project's source files, optionally under a subdirectory.
 """.strip()
 
 
@@ -235,7 +248,28 @@ def _tool_list_custom_tools(args: dict) -> str:
     return toolforge.list_tools()
 
 
+def _tool_search_project(args: dict) -> str:
+    from app.scriptgen import codebase
+
+    return codebase.search_project(str(args.get("query", "")))
+
+
+def _tool_read_project_file(args: dict) -> str:
+    from app.scriptgen import codebase
+
+    return codebase.read_project_file(str(args.get("path", "")))
+
+
+def _tool_list_project_files(args: dict) -> str:
+    from app.scriptgen import codebase
+
+    return codebase.list_project_files(str(args.get("subdir", "") or ""))
+
+
 _TOOLS = {
+    "search_project": _tool_search_project,
+    "read_project_file": _tool_read_project_file,
+    "list_project_files": _tool_list_project_files,
     "create_tool": _tool_create_tool,
     "run_custom_tool": _tool_run_custom_tool,
     "list_custom_tools": _tool_list_custom_tools,

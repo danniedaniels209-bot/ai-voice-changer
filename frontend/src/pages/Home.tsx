@@ -347,6 +347,52 @@ export function Home() {
         </div>
       </section>
 
+      {mode === "tts" && dubLanguages.length > 0 && (
+        <section>
+          <h3 className="text-sm font-medium text-text-muted mb-2">Translate the video</h3>
+          <div className="rounded-lg border border-border bg-surface/50 p-4">
+            <p className="text-xs text-text-muted mb-3">
+              Speak the video in another language: the speech is transcribed, translated, and
+              re-narrated by a native-language voice at the original timings. Needs a GPU session.
+            </p>
+            <div className="grid grid-cols-2 gap-3">
+              <label className="text-sm">
+                <div className="text-text-muted mb-1">Translate into</div>
+                <select
+                  value={dubLanguage}
+                  onChange={(e) => {
+                    const code = e.target.value;
+                    setDubLanguage(code);
+                    const lang = dubLanguages.find((l) => l.code === code);
+                    setDubVoice(lang?.voices[0]?.id ?? "");
+                  }}
+                  className="w-full bg-surface border border-border rounded-md px-3 py-2"
+                >
+                  <option value="">No — keep the original language</option>
+                  {dubLanguages.map((l) => (
+                    <option key={l.code} value={l.code}>{l.name}</option>
+                  ))}
+                </select>
+              </label>
+              {dubLanguage && (
+                <label className="text-sm">
+                  <div className="text-text-muted mb-1">Voice for that language</div>
+                  <select
+                    value={dubVoice}
+                    onChange={(e) => setDubVoice(e.target.value)}
+                    className="w-full bg-surface border border-border rounded-md px-3 py-2"
+                  >
+                    {(dubLanguages.find((l) => l.code === dubLanguage)?.voices ?? []).map((v) => (
+                      <option key={v.id} value={v.id}>{v.label}</option>
+                    ))}
+                  </select>
+                </label>
+              )}
+            </div>
+          </div>
+        </section>
+      )}
+
       <section>
         <h3 className="text-sm font-medium text-text-muted mb-2">Subtitles</h3>
         <div className="flex flex-wrap items-center gap-2">
@@ -522,41 +568,12 @@ export function Home() {
                 />
               </label>
             )}
-            {mode === "tts" && dubLanguages.length > 0 && (
-              <div className="mt-3 grid grid-cols-2 gap-3">
-                <label className="text-sm">
-                  <div className="text-text-muted mb-1">Dub into another language (needs GPU session)</div>
-                  <select
-                    value={dubLanguage}
-                    onChange={(e) => {
-                      const code = e.target.value;
-                      setDubLanguage(code);
-                      const lang = dubLanguages.find((l) => l.code === code);
-                      setDubVoice(lang?.voices[0]?.id ?? "");
-                    }}
-                    className="w-full bg-surface border border-border rounded-md px-3 py-2"
-                  >
-                    <option value="">No - keep English</option>
-                    {dubLanguages.map((l) => (
-                      <option key={l.code} value={l.code}>{l.name}</option>
-                    ))}
-                  </select>
-                </label>
-                {dubLanguage && (
-                  <label className="text-sm">
-                    <div className="text-text-muted mb-1">Dubbing voice</div>
-                    <select
-                      value={dubVoice}
-                      onChange={(e) => setDubVoice(e.target.value)}
-                      className="w-full bg-surface border border-border rounded-md px-3 py-2"
-                    >
-                      {(dubLanguages.find((l) => l.code === dubLanguage)?.voices ?? []).map((v) => (
-                        <option key={v.id} value={v.id}>{v.label}</option>
-                      ))}
-                    </select>
-                  </label>
-                )}
-              </div>
+            {mode === "tts" && dubLanguage && (
+              <p className="text-xs text-text-muted mt-3">
+                Translating into{" "}
+                {dubLanguages.find((l) => l.code === dubLanguage)?.name} — the dubbing voice
+                above is used instead of this one.
+              </p>
             )}
             {mode === "tts" && (
               <p className="text-xs text-text-muted mt-2">
