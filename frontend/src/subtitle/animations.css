@@ -1,0 +1,25 @@
+/* Keyed on cue/word id in SubtitleOverlay.tsx so React remounts a fresh DOM
+   node per cue/word — that's what makes these replay every time, since a
+   CSS animation only plays once per element lifetime. */
+
+@keyframes subfx-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.subfx-fade {
+  animation-name: subfx-fade;
+  animation-timing-function: ease-out;
+  animation-fill-mode: both;
+}
+
+@keyframes subfx-pop {
+  0% { transform: scale(0.6); }
+  60% { transform: scale(1.12); }
+  100% { transform: scale(1); }
+}
+.subfx-pop {
+  display: inline-block;
+  animation-name: subfx-pop;
+  animation-timing-function: ease-out;
+  animation-fill-mode: both;
+}

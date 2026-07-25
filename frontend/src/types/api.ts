@@ -81,6 +81,7 @@ export interface AppSettings {
   context_recognition: boolean;
   segment_editor: boolean;
   animated_captions: boolean;
+  caption_style: string | null;
   custom_voices: boolean;
   rename_duplicates: boolean;
   verify_exports: boolean;

@@ -619,12 +619,32 @@ def finalize_export(
     if subtitle_cues and app_settings.generate_subtitles and app_settings.burn_captions:
         from app.utils import subtitles
 
-        cue_objs = [subtitles.SubtitleCue(c.start, c.end, c.text) for c in subtitle_cues]
-        if app_settings.animated_captions:
+        if app_settings.caption_style:
+            from app.subtitle_engine import ass_renderer, word_align
+            from app.subtitle_engine.models import SubtitleCue as EngineCue
+            from app.subtitle_engine.presets import get_preset
+
+            style = get_preset(app_settings.caption_style)
+            engine_cues = [
+                EngineCue(id=str(i), start=c.start, end=c.end, text=c.text)
+                for i, c in enumerate(subtitle_cues)
+            ]
+            # Word-level timing only matters for word/karaoke/highlight
+            # styles — skip the extra transcription pass for line styles.
+            if style.word_mode != "line":
+                device_mode = get_effective_device_mode()
+                device = get_hardware_info(device_mode).resolved_device
+                engine_cues = word_align.align_words(merged_audio_path, engine_cues, device)
+            burn_path = job_dir / "captions.ass"
+            ass_renderer.render_ass(engine_cues, style, burn_path)
+            job_manager.append_log(job_id, f"Burning '{style.name}' captions (re-encodes video)...")
+        elif app_settings.animated_captions:
+            cue_objs = [subtitles.SubtitleCue(c.start, c.end, c.text) for c in subtitle_cues]
             burn_path = job_dir / "captions.ass"
             subtitles.write_word_pop_ass(cue_objs, burn_path)
             job_manager.append_log(job_id, "Burning animated word-by-word captions (re-encodes video)...")
         else:
+            cue_objs = [subtitles.SubtitleCue(c.start, c.end, c.text) for c in subtitle_cues]
             burn_path = job_dir / "captions.srt"
             subtitles.write_srt(cue_objs, burn_path)
             job_manager.append_log(job_id, "Burning captions into the video (re-encodes video)...")

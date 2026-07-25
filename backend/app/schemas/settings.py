@@ -78,7 +78,19 @@ class AppSettings(BaseModel):
         default=False,
         description=(
             "When burning captions, render them word-by-word (Shorts/TikTok "
-            "style) instead of static lines. Requires 'Burn captions'."
+            "style) instead of static lines. Requires 'Burn captions'. "
+            "Ignored once caption_style is explicitly set — kept only so "
+            "settings.json files saved before the subtitle engine existed "
+            "keep behaving the way they always did."
+        ),
+    )
+    caption_style: str | None = Field(
+        default=None,
+        description=(
+            "Subtitle engine preset id used when burning captions (see "
+            "GET /subtitles/presets: classic, karaoke, word_pop, highlight, "
+            "capcut). None = fall back to the legacy animated_captions "
+            "on/off toggle instead."
         ),
     )
     custom_voices: bool = Field(
@@ -137,6 +149,7 @@ class AppSettingsUpdate(BaseModel):
     loudness_normalization: bool | None = None
     segment_editor: bool | None = None
     animated_captions: bool | None = None
+    caption_style: str | None = None
     custom_voices: bool | None = None
     rename_duplicates: bool | None = None
     verify_exports: bool | None = None

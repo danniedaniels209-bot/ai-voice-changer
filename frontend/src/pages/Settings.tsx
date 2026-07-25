@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { getSettings, updateSettings } from "../api/settings";
 import { getHealth } from "../api/health";
 import { ApiError } from "../api/client";
+import { getPreset } from "../subtitle/presets";
+import { SubtitlePreview } from "../subtitle/SubtitlePreview";
 import type { AppSettings, HealthResponse } from "../types/api";
 
 export function Settings() {
@@ -264,18 +266,25 @@ export function Settings() {
         </label>
 
         <label className="flex items-start gap-2 text-sm">
-          <input
-            type="checkbox"
-            className="mt-0.5"
-            checked={settings.animated_captions}
-            onChange={(e) => save({ animated_captions: e.target.checked })}
-          />
-          <span>
-            <span className="block">Animated word-by-word captions</span>
-            <span className="text-text-muted text-xs">
-              When burning captions, each word pops on screen as it's spoken (Shorts/TikTok
-              style) instead of static lines. Requires "Burn captions" to be on.
+          <span className="min-w-0">
+            <span className="block">Caption style</span>
+            <span className="text-text-muted text-xs block mb-1">
+              Which subtitle engine preset to burn in. Requires "Burn captions" to be on.
             </span>
+            <select
+              className="bg-surface border border-border rounded-md px-2 py-1 text-sm"
+              value={settings.caption_style ?? "classic"}
+              onChange={(e) => save({ caption_style: e.target.value })}
+            >
+              <option value="classic">Classic — static line, white text, black stroke</option>
+              <option value="word_pop">Word Pop — one word at a time, pops in</option>
+              <option value="karaoke">Karaoke — words sweep-highlight as spoken</option>
+              <option value="highlight">Highlight — current word recolored, rest stay white</option>
+              <option value="capcut">CapCut — bold word-by-word on a rounded box</option>
+            </select>
+            <div className="mt-2">
+              <SubtitlePreview style={getPreset(settings.caption_style)} />
+            </div>
           </span>
         </label>
 

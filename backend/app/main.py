@@ -12,7 +12,7 @@ from fastapi.responses import JSONResponse
 
 from app.api import ws
 from app.api.routes import (
-    coder, convert, health, jobs, models, narration, scriptgen, upload, voices,
+    coder, convert, health, jobs, models, narration, scriptgen, subtitles, upload, voices,
 )
 from app.api.routes import settings as settings_routes
 from app.core.config import Paths, get_settings
@@ -135,6 +135,7 @@ def create_app() -> FastAPI:
     app.include_router(narration.router)
     app.include_router(scriptgen.router)
     app.include_router(coder.router)
+    app.include_router(subtitles.router)
     app.include_router(upload.router)
     app.include_router(jobs.router)
     app.include_router(convert.router)
