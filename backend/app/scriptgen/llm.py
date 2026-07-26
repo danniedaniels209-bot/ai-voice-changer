@@ -19,13 +19,6 @@ from app.core.logging import get_logger
 logger = get_logger(__name__)
 
 MODELS: dict[str, dict] = {
-    "coder": {
-        "id": "Qwen/Qwen2.5-Coder-7B-Instruct",
-        "label": "Qwen2.5 Coder 7B — for Coder (4-bit)",
-        "download": "~5 GB in 4-bit",
-        "quant4": True,
-        "arch": "qwen2",
-    },
     "chat": {
         "id": "NousResearch/Hermes-3-Llama-3.1-8B",
         "label": "Hermes 3 Llama 3.1 8B — for AI Chat (4-bit)",
@@ -71,8 +64,8 @@ _bundle = None  # (tokenizer, model) for _active_key
 
 # Per-thread progress callback. A model switch means the FIRST reply after
 # it has to download+load multi-GB weights, which can take minutes — without
-# this, that time is indistinguishable from a hang. Each background chat/
-# coder task sets this on its own worker thread before generating.
+# this, that time is indistinguishable from a hang. Each background chat
+# task sets this on its own worker thread before generating.
 _status_local = threading.local()
 
 
@@ -92,10 +85,10 @@ def _notify(message: str) -> None:
 
 
 # Same per-thread pattern as the status hook, for live token streaming: each
-# background chat/coder task registers a callback that receives the reply
-# text so far, called repeatedly as the model writes it — so the UI can show
-# the model actually thinking instead of a static "Thinking..." label until
-# the whole answer lands at once.
+# background chat task registers a callback that receives the reply text so
+# far, called repeatedly as the model writes it — so the UI can show the
+# model actually thinking instead of a static "Thinking..." label until the
+# whole answer lands at once.
 _stream_local = threading.local()
 
 

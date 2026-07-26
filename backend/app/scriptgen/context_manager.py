@@ -1,6 +1,6 @@
 """
-Conversation context management for the long-running agent loops (Coder,
-AI Chat). Two problems this solves:
+Conversation context management for the long-running AI Chat agent loop.
+Two problems this solves:
 
 1. A long agent run appends a tool-call + tool-result pair to `messages`
    every iteration, so the prompt sent to the model grows every single
