@@ -12,7 +12,7 @@ from fastapi.responses import JSONResponse
 
 from app.api import ws
 from app.api.routes import (
-    convert, health, jobs, models, narration, scriptgen, subtitles, upload, voices,
+    convert, health, jobs, models, motion, narration, scriptgen, subtitles, upload, voices,
 )
 from app.api.routes import settings as settings_routes
 from app.core.config import Paths, get_settings
@@ -135,6 +135,7 @@ def create_app() -> FastAPI:
     app.include_router(narration.router)
     app.include_router(scriptgen.router)
     app.include_router(subtitles.router)
+    app.include_router(motion.router)
     app.include_router(upload.router)
     app.include_router(jobs.router)
     app.include_router(convert.router)
@@ -142,12 +143,36 @@ def create_app() -> FastAPI:
 
     # Single-server mode: when the frontend has been built (npm run build),
     # serve it directly — one process, one port, one URL. API routes above
-    # take precedence; everything else falls through to the static app.
+    # take precedence (registered first — Starlette matches in registration
+    # order); everything else falls through to here.
+    #
+    # StaticFiles(html=True) alone only serves index.html for a path that
+    # IS a directory on disk — it does NOT fall back to index.html for a
+    # client-side route like /settings or /motion/<id> that has no matching
+    # file, so direct navigation (typing the URL, refreshing, or a
+    # non-browser client like Playwright's page.goto) 404s even though
+    # clicking there from within the app works fine (React Router handles
+    # it client-side once index.html has already loaded). Serving assets
+    # from their own mount and explicitly falling back to index.html for
+    # everything else fixes that.
     frontend_dist = Paths.frontend / "dist"
     if frontend_dist.exists():
+        from fastapi.responses import FileResponse
         from fastapi.staticfiles import StaticFiles
 
-        app.mount("/", StaticFiles(directory=str(frontend_dist), html=True), name="frontend")
+        assets_dir = frontend_dist / "assets"
+        if assets_dir.exists():
+            app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="frontend-assets")
+
+        index_file = frontend_dist / "index.html"
+
+        @app.get("/{full_path:path}")
+        async def spa_fallback(full_path: str) -> FileResponse:
+            candidate = frontend_dist / full_path
+            if full_path and candidate.is_file():
+                return FileResponse(str(candidate))
+            return FileResponse(str(index_file))
+
         logger.info("Serving frontend from %s", frontend_dist)
 
     return app

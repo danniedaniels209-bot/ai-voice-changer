@@ -88,3 +88,8 @@ class InsufficientDiskSpaceError(AppError):
 class InvalidSettingsError(AppError):
     code = "invalid_settings"
     status_code = 400
+
+
+class MotionProjectNotFoundError(AppError):
+    code = "motion_project_not_found"
+    status_code = 404

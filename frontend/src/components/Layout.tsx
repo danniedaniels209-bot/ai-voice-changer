@@ -4,6 +4,7 @@ import {
   PlusCircle,
   PenLine,
   Sparkles,
+  Clapperboard,
   ListVideo,
   Box,
   BookOpen,
@@ -27,6 +28,7 @@ const NAV_GROUPS: Group[] = [
       { to: "/", label: "New Conversion", icon: PlusCircle, end: true },
       { to: "/studio", label: "Script Studio", icon: PenLine },
       { to: "/chat", label: "AI Chat", icon: Sparkles },
+      { to: "/motion", label: "Motion Studio", icon: Clapperboard },
     ],
   },
   {
@@ -49,6 +51,7 @@ const PAGE_TITLES: Record<string, string> = {
   "/": "New Conversion",
   "/studio": "Script Studio",
   "/chat": "AI Chat",
+  "/motion": "Motion Studio",
   "/processing": "Jobs",
   "/models": "Voice Models",
   "/guide": "Guide",
@@ -76,7 +79,14 @@ export function Layout() {
   const gpu = health?.hardware;
   const title =
     PAGE_TITLES[location.pathname] ??
-    (location.pathname.startsWith("/processing/") ? "Job" : "");
+    (location.pathname.startsWith("/processing/")
+      ? "Job"
+      : location.pathname.startsWith("/motion/")
+        ? "Motion Studio"
+        : "");
+  // The Motion Studio editor (not its project list) needs the full content
+  // area for canvas/panels — no centered max-width column, no padding.
+  const isFullBleed = /^\/motion\/[^/]+$/.test(location.pathname);
 
   return (
     <div className="h-screen flex flex-col bg-bg text-text overflow-hidden">
@@ -205,13 +215,14 @@ export function Layout() {
             )}
           </header>
 
-          <main className="flex-1 overflow-y-auto min-h-0">
-            <div
-              key={location.pathname}
-              className="max-w-6xl w-full mx-auto px-8 py-8 animate-rise"
-            >
+          <main className={`flex-1 min-h-0 ${isFullBleed ? "flex" : "overflow-y-auto"}`}>
+            {isFullBleed ? (
               <Outlet />
-            </div>
+            ) : (
+              <div key={location.pathname} className="max-w-6xl w-full mx-auto px-8 py-8 animate-rise">
+                <Outlet />
+              </div>
+            )}
           </main>
 
           {/* ── Status bar ── */}

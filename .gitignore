@@ -11,6 +11,7 @@ temp/
 exports/
 logs/
 models/
+motion_projects/
 backend/app_settings.json
 backend/.env
 

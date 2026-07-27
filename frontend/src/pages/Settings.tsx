@@ -6,6 +6,14 @@ import { getPreset } from "../subtitle/presets";
 import { SubtitlePreview } from "../subtitle/SubtitlePreview";
 import type { AppSettings, HealthResponse } from "../types/api";
 
+const CAPTION_STYLE_OPTIONS = [
+  { id: "classic", name: "Classic", description: "Static line, white text, black stroke" },
+  { id: "word_pop", name: "Word Pop", description: "One word at a time, pops in" },
+  { id: "karaoke", name: "Karaoke", description: "Words sweep-highlight as spoken" },
+  { id: "highlight", name: "Highlight", description: "Current word recolored, rest stay white" },
+  { id: "capcut", name: "CapCut", description: "Bold word-by-word on a rounded box" },
+];
+
 export function Settings() {
   const [settings, setSettingsState] = useState<AppSettings | null>(null);
   // Cloud GPU backend: stored on THIS device (localStorage), not in the
@@ -265,28 +273,35 @@ export function Settings() {
           </span>
         </label>
 
-        <label className="flex items-start gap-2 text-sm">
-          <span className="min-w-0">
-            <span className="block">Caption style</span>
-            <span className="text-text-muted text-xs block mb-1">
-              Which subtitle engine preset to burn in. Requires "Burn captions" to be on.
-            </span>
-            <select
-              className="bg-surface border border-border rounded-md px-2 py-1 text-sm"
-              value={settings.caption_style ?? "classic"}
-              onChange={(e) => save({ caption_style: e.target.value })}
-            >
-              <option value="classic">Classic — static line, white text, black stroke</option>
-              <option value="word_pop">Word Pop — one word at a time, pops in</option>
-              <option value="karaoke">Karaoke — words sweep-highlight as spoken</option>
-              <option value="highlight">Highlight — current word recolored, rest stay white</option>
-              <option value="capcut">CapCut — bold word-by-word on a rounded box</option>
-            </select>
-            <div className="mt-2">
-              <SubtitlePreview style={getPreset(settings.caption_style)} />
-            </div>
+        <div className="text-sm">
+          <span className="block">Caption style</span>
+          <span className="text-text-muted text-xs block mb-2">
+            Which subtitle engine preset to burn in. Requires "Burn captions" to be on.
           </span>
-        </label>
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+            {CAPTION_STYLE_OPTIONS.map((opt) => {
+              const selected = (settings.caption_style ?? "classic") === opt.id;
+              return (
+                <button
+                  key={opt.id}
+                  type="button"
+                  onClick={() => save({ caption_style: opt.id })}
+                  className={`text-left rounded-md border px-3 py-2 transition-colors ${
+                    selected
+                      ? "border-accent bg-accent-dim text-text"
+                      : "border-border text-text-muted hover:text-text hover:bg-surface-hover"
+                  }`}
+                >
+                  <span className="block text-sm font-medium">{opt.name}</span>
+                  <span className="block text-xs mt-0.5 opacity-80">{opt.description}</span>
+                </button>
+              );
+            })}
+          </div>
+          <div className="mt-3">
+            <SubtitlePreview style={getPreset(settings.caption_style)} />
+          </div>
+        </div>
 
         <label className="flex items-start gap-2 text-sm">
           <input
