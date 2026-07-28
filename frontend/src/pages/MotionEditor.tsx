@@ -16,7 +16,7 @@ import {
   Spline,
   HelpCircle,
 } from "lucide-react";
-import { getMotionProject, saveMotionProject, uploadMotionAsset } from "../api/motion";
+import { getMotionProject, saveMotionProject, uploadMotionAsset, type MotionAsset } from "../api/motion";
 import { editorReducer, getResolvedTransform, newId, type EditorState } from "../motion/state";
 import { createLayer } from "../motion/layerFactory";
 import { usePlaybackClock } from "../motion/usePlaybackClock";
@@ -258,6 +258,14 @@ export function MotionEditor() {
     // Stay in connect mode with the target armed, so chaining A->B->C is
     // three clicks rather than six.
     setConnectFrom(layerId);
+  }
+
+  /** Reuse an already-uploaded asset. No upload happens — the new layer
+   *  points at the same stored file, which is the entire point of having an
+   *  asset library rather than re-importing the same clip per scene. */
+  function handleInsertAsset(asset: MotionAsset) {
+    const type: LayerType = asset.content_type.startsWith("video/") ? "video" : "image";
+    dispatch({ type: "ADD_LAYER", layer: createLayer(type, { src: asset.source_url }) });
   }
 
   function handleInsertLayers(layers: MotionLayer[]) {
@@ -522,6 +530,7 @@ export function MotionEditor() {
         onClose={() => setInsertOpen(false)}
         onInsertLayers={handleInsertLayers}
         onImportVideo={handleImportVideo}
+        onInsertAsset={handleInsertAsset}
       />
 
       <CommandPalette isOpen={paletteOpen} onClose={() => setPaletteOpen(false)} commands={commands} />
@@ -571,6 +580,7 @@ export function MotionEditor() {
             connectMode={connectMode}
             connectFromLayerId={connectFrom}
             onConnectPick={handleConnectPick}
+            onOpenInsert={() => setInsertOpen(true)}
           />
         </div>
 

@@ -121,3 +121,26 @@ export function resolveMotionAssetUrl(sourceUrl: string): string {
 export function cancelMotionExport(taskId: string): Promise<MotionExportTaskStatus> {
   return apiDelete<MotionExportTaskStatus>(`/motion/exports/${taskId}`);
 }
+
+export interface MotionAsset {
+  asset_id: string;
+  filename: string;
+  /** Relative path — resolve with resolveMotionAssetUrl before using it as
+   *  a src, so it keeps working in remote-backend mode. */
+  source_url: string;
+  content_type: string;
+  size_bytes: number;
+  created: string;
+}
+
+export function listMotionAssets(): Promise<MotionAsset[]> {
+  return apiGet<MotionAsset[]>("/motion/assets");
+}
+
+/** Delete an uploaded asset. The backend refuses with 409 if a project still
+ *  references it, and the error names what's using it — surface that rather
+ *  than a generic failure, since "can't delete" without a reason is the
+ *  least helpful possible message. */
+export function deleteMotionAsset(assetId: string): Promise<{ deleted: boolean }> {
+  return apiDelete<{ deleted: boolean }>(`/motion/assets/${assetId}`);
+}

@@ -13,6 +13,7 @@
 import { X, Shapes } from "lucide-react";
 import { ComponentLibraryPanel } from "../components/ComponentLibraryPanel";
 import { ChartLibraryPanel } from "../charts/ChartLibraryPanel";
+import { AssetLibraryPanel } from "../assets/AssetLibraryPanel";
 import { CalloutPicker } from "../callouts/CalloutPicker";
 import { CursorPicker } from "../cursor/CursorPicker";
 import { DeviceFramePicker } from "../deviceframes/DeviceFramePicker";
@@ -20,15 +21,18 @@ import { TextFxPicker } from "../textfx/TextFxPicker";
 import { VideoImportPanel } from "../video/VideoImportPanel";
 import { TechIconLibraryPanel } from "../icons/TechIconLibraryPanel";
 import type { MotionLayer } from "../../types/motion";
+import type { MotionAsset } from "../../api/motion";
 
 export interface InsertLibraryModalProps {
   isOpen: boolean;
   onClose: () => void;
   onInsertLayers: (layers: MotionLayer[]) => void;
   onImportVideo: (file: File) => void;
+  /** Reuse an already-uploaded asset instead of uploading it again. */
+  onInsertAsset: (asset: MotionAsset) => void;
 }
 
-export function InsertLibraryModal({ isOpen, onClose, onInsertLayers, onImportVideo }: InsertLibraryModalProps) {
+export function InsertLibraryModal({ isOpen, onClose, onInsertLayers, onImportVideo, onInsertAsset }: InsertLibraryModalProps) {
   if (!isOpen) return null;
 
   function insertAndClose(layers: MotionLayer[]) {
@@ -71,6 +75,12 @@ export function InsertLibraryModal({ isOpen, onClose, onInsertLayers, onImportVi
               />
             </div>
           </div>
+          <AssetLibraryPanel
+            onInsertAsset={(asset) => {
+              onInsertAsset(asset);
+              onClose();
+            }}
+          />
           <ComponentLibraryPanel onInsert={insertAndClose} />
           <ChartLibraryPanel onInsert={insertAndClose} />
           <CalloutPicker onInsert={insertAndClose} />
