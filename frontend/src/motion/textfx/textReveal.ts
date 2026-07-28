@@ -138,6 +138,7 @@ function makeUnitLayer(
       height: Math.round(fontSize * 1.2),
       rotation: 0,
       opacity: 1,
+      blur: 0,
     },
   };
 }

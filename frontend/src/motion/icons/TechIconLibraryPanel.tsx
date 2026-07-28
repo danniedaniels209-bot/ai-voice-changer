@@ -36,7 +36,7 @@ function buildTechIconGroup(x: number, y: number, iconName: string): MotionLayer
     id: newId(),
     name: `${iconName} box`,
     type: "rect",
-    transform: { x, y, width: containerW, height: containerH, rotation: 0, opacity: 1 },
+    transform: { x, y, width: containerW, height: containerH, rotation: 0, opacity: 1, blur: 0 },
     locked: false,
     hidden: false,
     rect: {
@@ -62,7 +62,8 @@ function buildTechIconGroup(x: number, y: number, iconName: string): MotionLayer
       width: containerW - padding * 2, 
       height: containerH - padding * 2, 
       rotation: 0, 
-      opacity: 1 
+      opacity: 1,
+      blur: 0,
     },
     locked: false,
     hidden: false,

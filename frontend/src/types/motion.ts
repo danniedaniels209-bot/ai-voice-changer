@@ -12,7 +12,7 @@ import type { ShadowEffect } from "../motion/shadowfx/shadowTypes";
 import type { ConnectorStyle } from "../motion/connector/ConnectorTypes";
 
 export type LayerType = "rect" | "ellipse" | "text" | "image" | "video" | "polygon" | "star" | "triangle" | "line" | "arrow";
-export type AnimatableProperty = "x" | "y" | "width" | "height" | "rotation" | "opacity";
+export type AnimatableProperty = "x" | "y" | "width" | "height" | "rotation" | "opacity" | "blur";
 export type EasingType =
   | "linear"
   | "ease_in"
@@ -22,6 +22,13 @@ export type EasingType =
   | "elastic"
   | "spring"
   | "overshoot";
+
+export interface SceneMarker {
+  id: string;
+  time_ms: number;
+  label: string;
+  color: string;
+}
 
 export interface Keyframe {
   id: string;
@@ -38,6 +45,7 @@ export interface Transform {
   height: number;
   rotation: number; // degrees
   opacity: number; // 0-1
+  blur: number; // gaussian blur radius in px (0 = no blur)
 }
 
 export interface RectLayerProps {
@@ -299,6 +307,8 @@ export interface MotionScene {
   background_color: string;
   layers: MotionLayer[];
   audio_tracks: AudioTrack[];
+  /** Optional markers on the scene timeline. */
+  markers?: SceneMarker[];
   /** Optional connectors between layers. Flat list per scene — a connector
    *  is a relationship between two layers, so storing it on either side
    *  would create an asymmetry around which side owns deletion; a flat

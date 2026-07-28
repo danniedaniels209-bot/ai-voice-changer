@@ -58,6 +58,7 @@ function rectLayer(x: number, y: number, name: string, opts: RectOpts = {}): Mot
       height: opts.height ?? 40,
       rotation: opts.rotation ?? 0,
       opacity: opts.fill_opacity ?? 1,
+      blur: 0,
     },
   };
 }
@@ -95,6 +96,7 @@ function ellipseLayer(x: number, y: number, name: string, opts: EllipseOpts = {}
       height: opts.height ?? 40,
       rotation: 0,
       opacity: opts.fill_opacity ?? 1,
+      blur: 0,
     },
   };
 }

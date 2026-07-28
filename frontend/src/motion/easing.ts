@@ -111,5 +111,6 @@ export function resolveTransformAtTime(layer: MotionLayer, timeMs: number): Tran
     height: interpolateProperty(layer.keyframes, "height", timeMs, t.height),
     rotation: interpolateProperty(layer.keyframes, "rotation", timeMs, t.rotation),
     opacity: interpolateProperty(layer.keyframes, "opacity", timeMs, t.opacity),
+    blur: interpolateProperty(layer.keyframes, "blur", timeMs, t.blur),
   };
 }

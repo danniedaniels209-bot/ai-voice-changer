@@ -301,6 +301,13 @@ export function Inspector({
             onChange={(v) => onUpdateTransform({ opacity: Math.min(1, Math.max(0, v)) })}
             {...keyframeProps("opacity", t.opacity)}
           />
+          <NumberField
+            label="Blur px"
+            value={t.blur}
+            step={1}
+            onChange={(v) => onUpdateTransform({ blur: Math.max(0, v) })}
+            {...keyframeProps("blur", t.blur)}
+          />
         </div>
         <p className="text-[10px] text-text-faint mt-1.5">
           Click the ◇ next to a field to keyframe it at the playhead's current time.

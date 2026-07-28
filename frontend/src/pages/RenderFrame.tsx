@@ -85,7 +85,20 @@ function getEvaluatedTransform(layer: MotionLayer, timeMs: number): Transform {
     height: evaluateProperty(layer, "height", timeMs),
     rotation: evaluateProperty(layer, "rotation", timeMs),
     opacity: evaluateProperty(layer, "opacity", timeMs),
+    blur: evaluateProperty(layer, "blur", timeMs),
   };
+}
+
+/**
+ * Per-layer gaussian blur <filter>. stdDeviation is blur/2 so the visual
+ * radius matches the UI `blur` value in px.
+ */
+function renderBlurFilter(layerId: string, blur: number): React.ReactNode {
+  return (
+    <filter id={`${layerId}-blur`} x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation={blur / 2} />
+    </filter>
+  );
 }
 
 /**
@@ -361,13 +374,15 @@ function renderLayer(layer: MotionLayer, timeMs: number, sceneDurationMs: number
       );
     }
 
-    // Wrap the shape in a filter group when shadow is set, so feDropShadow
-  // applies before the parent's transform/opacity group composites it.
-  const filteredShape = layer.shadow ? (
-    <g filter={`url(#${layer.id}-shadow)`}>{shape}</g>
-  ) : (
-    shape
-  );
+    // Apply blur first (inner), then shadow (outer), so feDropShadow
+    // receives the already-blurred shape.
+    let filteredShape: React.ReactNode = shape;
+    if (t.blur > 0) {
+      filteredShape = <g filter={`url(#${layer.id}-blur)`}>{filteredShape}</g>;
+    }
+    if (layer.shadow) {
+      filteredShape = <g filter={`url(#${layer.id}-shadow)`}>{filteredShape}</g>;
+    }
 
   return (
     <g key={layer.id} transform={groupTransform} opacity={t.opacity}>
@@ -519,12 +534,16 @@ export function RenderFrame() {
       >
         {!isTransparent && <rect width={scene.width} height={scene.height} fill={scene.background_color} />}
         <defs>
-          {scene.layers.map((layer) => (
-            <Fragment key={`defs-${layer.id}`}>
-              {layer.gradient ? renderGradientDef(layer.id, layer.gradient) : null}
-              {layer.shadow ? renderShadowFilter(layer.id, layer.shadow) : null}
-            </Fragment>
-          ))}
+          {scene.layers.map((layer) => {
+            const t = getEvaluatedTransform(layer, requestedTimeMs);
+            return (
+              <Fragment key={`defs-${layer.id}`}>
+                {layer.gradient ? renderGradientDef(layer.id, layer.gradient) : null}
+                {layer.shadow ? renderShadowFilter(layer.id, layer.shadow) : null}
+                {t.blur > 0 ? renderBlurFilter(layer.id, t.blur) : null}
+              </Fragment>
+            );
+          })}
         </defs>
         {scene.layers.map((layer) => renderLayer(layer, requestedTimeMs, scene.duration_ms, scene.layers))}
         {/* Connectors, drawn after the layers so they sit on top — identical

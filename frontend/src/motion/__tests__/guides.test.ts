@@ -26,7 +26,7 @@ const THRESHOLD = 8;
 const OTHER = [{ x: 800, y: 200, width: 300, height: 200 }];
 
 function t(x: number, y: number, width: number, height: number): Transform {
-  return { x, y, width, height, rotation: 0, opacity: 1 };
+  return { x, y, width, height, rotation: 0, opacity: 1, blur: 0 };
 }
 
 describe("computeDragSnap", () => {

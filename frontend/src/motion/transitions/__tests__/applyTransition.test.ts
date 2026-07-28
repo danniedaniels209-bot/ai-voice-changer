@@ -29,7 +29,7 @@ import { applyTransitionToScene } from "../applyTransitionToScene";
 const DURATION = 600;
 
 function makeTransform(over: Partial<Transform> = {}): Transform {
-  return { x: 400, y: 300, width: 320, height: 200, rotation: 0, opacity: 1, ...over };
+  return { x: 400, y: 300, width: 320, height: 200, rotation: 0, opacity: 1, blur: 0, ...over };
 }
 
 function makeLayer(over: Partial<MotionLayer> = {}): MotionLayer {

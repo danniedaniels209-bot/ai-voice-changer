@@ -23,7 +23,7 @@ function layer(id: string, x: number, y: number, w = 100, h = 60, keyframes: Key
     id,
     name: id,
     type: "rect",
-    transform: { x, y, width: w, height: h, rotation: 0, opacity: 1 },
+    transform: { x, y, width: w, height: h, rotation: 0, opacity: 1, blur: 0 },
     locked: false,
     hidden: false,
     rect: { fill: "#fff", corner_radius: 0, stroke_color: "#000", stroke_width: 0 },

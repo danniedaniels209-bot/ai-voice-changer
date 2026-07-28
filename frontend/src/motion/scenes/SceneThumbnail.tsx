@@ -41,6 +41,7 @@ function transformAtRest(layer: MotionLayer): Transform {
     height: firstValue("height"),
     rotation: firstValue("rotation"),
     opacity: firstValue("opacity"),
+    blur: firstValue("blur"),
   };
 }
 
@@ -89,6 +90,18 @@ function renderShadowFilter(layerId: string, shadow: ShadowEffect): React.ReactN
         floodColor={shadow.color}
         floodOpacity={shadow.opacity}
       />
+    </filter>
+  );
+}
+
+/**
+ * Per-layer gaussian blur <filter>. stdDeviation is blur/2 so the visual
+ * radius matches the UI `blur` value in px.
+ */
+function renderBlurFilter(layerId: string, blur: number): React.ReactNode {
+  return (
+    <filter id={`${layerId}-blur`} x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation={blur / 2} />
     </filter>
   );
 }
@@ -269,11 +282,13 @@ function renderLayer(layer: MotionLayer, sceneDurationMs: number, layers: Motion
       );
     }
 
-    const filteredShape = layer.shadow ? (
-    <g filter={`url(#${layer.id}-shadow)`}>{shape}</g>
-  ) : (
-    shape
-  );
+    let filteredShape: React.ReactNode = shape;
+    if (t.blur > 0) {
+      filteredShape = <g filter={`url(#${layer.id}-blur)`}>{filteredShape}</g>;
+    }
+    if (layer.shadow) {
+      filteredShape = <g filter={`url(#${layer.id}-shadow)`}>{filteredShape}</g>;
+    }
 
   return (
     <g key={layer.id} transform={groupTransform} opacity={t.opacity}>
@@ -307,12 +322,16 @@ export function SceneThumbnail({ scene, width, height }: SceneThumbnailProps) {
         style={{ display: "block" }}
       >
         <defs>
-          {scene.layers.map((layer) => (
-            <Fragment key={`defs-${layer.id}`}>
-              {layer.gradient ? renderGradientDef(layer.id, layer.gradient) : null}
-              {layer.shadow ? renderShadowFilter(layer.id, layer.shadow) : null}
-            </Fragment>
-          ))}
+          {scene.layers.map((layer) => {
+            const t = transformAtRest(layer);
+            return (
+              <Fragment key={`defs-${layer.id}`}>
+                {layer.gradient ? renderGradientDef(layer.id, layer.gradient) : null}
+                {layer.shadow ? renderShadowFilter(layer.id, layer.shadow) : null}
+                {t.blur > 0 ? renderBlurFilter(layer.id, t.blur) : null}
+              </Fragment>
+            );
+          })}
         </defs>
         <rect width={sceneW} height={sceneH} fill={scene.background_color} />
         {scene.layers.map((layer) => renderLayer(layer, scene.duration_ms, scene.layers))}

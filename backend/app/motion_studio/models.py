@@ -5,7 +5,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 LayerType = Literal["rect", "ellipse", "text", "image", "video", "polygon", "star", "triangle", "line", "arrow"]
-AnimatableProperty = Literal["x", "y", "width", "height", "rotation", "opacity"]
+AnimatableProperty = Literal["x", "y", "width", "height", "rotation", "opacity", "blur"]
 EasingType = Literal[
     "linear",
     "ease_in",
@@ -33,6 +33,7 @@ class Transform(BaseModel):
     height: float = 200.0
     rotation: float = 0.0  # degrees
     opacity: float = 1.0  # 0-1
+    blur: float = 0.0  # gaussian blur radius (0 = no blur)
 
 
 class RectLayerProps(BaseModel):

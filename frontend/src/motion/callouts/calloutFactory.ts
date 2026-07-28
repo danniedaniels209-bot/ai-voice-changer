@@ -49,6 +49,7 @@ function rectLayer(x: number, y: number, opts: CalloutRectOptions = {}): MotionL
       height: opts.height ?? 80,
       rotation: 0,
       opacity: opts.fill_opacity ?? 1,
+      blur: 0,
     },
   };
 }
@@ -85,6 +86,7 @@ function textLayer(
       height: opts.height ?? 60,
       rotation: 0,
       opacity: 1,
+      blur: 0,
     },
   };
 }

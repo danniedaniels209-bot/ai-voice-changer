@@ -133,6 +133,19 @@ function renderShadowFilter(layerId: string, shadow: ShadowEffect): React.ReactN
   );
 }
 
+/**
+ * Per-layer gaussian blur <filter>. stdDeviation is blur/2 so the visual
+ * radius matches the UI `blur` value in px. Applied only when t.blur > 0.
+ * x/y/width/height are expanded to prevent clipping at the filter boundaries.
+ */
+function renderBlurFilter(layerId: string, blur: number): React.ReactNode {
+  return (
+    <filter id={`${layerId}-blur`} x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation={blur / 2} />
+    </filter>
+  );
+}
+
 /** Compute the fill value for a layer — either the gradient url (if set) or
  *  the shape's plain solid fill. */
 function resolveFill(
@@ -531,13 +544,16 @@ export function MotionCanvas({
       );
     }
 
-    // Wrap the shape in a filter group when shadow is set, so feDropShadow
-    // applies before the parent's transform/opacity group composites it.
-    const filteredShape = layer.shadow ? (
-      <g filter={`url(#${layer.id}-shadow)`}>{shape}</g>
-    ) : (
-      shape
-    );
+    // Apply blur first (inner), then shadow (outer), so feDropShadow
+    // receives the already-blurred shape rather than creating a crisp
+    // shadow of a blurred image.
+    let filteredShape = shape;
+    if (t.blur > 0) {
+      filteredShape = <g filter={`url(#${layer.id}-blur)`}>{filteredShape}</g>;
+    }
+    if (layer.shadow) {
+      filteredShape = <g filter={`url(#${layer.id}-shadow)`}>{filteredShape}</g>;
+    }
 
     return (
       <g
@@ -628,16 +644,20 @@ export function MotionCanvas({
             strokeWidth={1}
           />
         </pattern>
-        {/* Per-layer gradient fills and shadow filters — emitted before the
-            layer map is rendered so url(#id-fill) / url(#id-shadow) resolve
-            when each layer's shape is drawn. Layers without effects just
-            don't appear here, which is fine. */}
-        {scene.layers.map((layer) => (
-          <Fragment key={`defs-${layer.id}`}>
-            {layer.gradient ? renderGradientDef(layer.id, layer.gradient) : null}
-            {layer.shadow ? renderShadowFilter(layer.id, layer.shadow) : null}
-          </Fragment>
-        ))}
+        {/* Per-layer gradient fills, shadow filters, and blur filters —
+            emitted before the layer map is rendered so url(#id-fill) /
+            url(#id-shadow) / url(#id-blur) resolve when each layer's shape
+            is drawn. Layers without effects just don't appear here. */}
+        {scene.layers.map((layer) => {
+          const resolved = getTransform(layer);
+          return (
+            <Fragment key={`defs-${layer.id}`}>
+              {layer.gradient ? renderGradientDef(layer.id, layer.gradient) : null}
+              {layer.shadow ? renderShadowFilter(layer.id, layer.shadow) : null}
+              {resolved.blur > 0 ? renderBlurFilter(layer.id, resolved.blur) : null}
+            </Fragment>
+          );
+        })}
       </defs>
       <rect width="100%" height="100%" fill="url(#motion-grid)" />
 
