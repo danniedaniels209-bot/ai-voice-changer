@@ -149,18 +149,17 @@ export function ScenePanel({
         })}
 
         {scenes.length === 1 && (
-          <div className="flex flex-col items-center justify-center p-4 text-center mt-4 border-t border-border/50">
-            <h4 className="text-xs font-medium text-text mb-1">Need a sequence?</h4>
-            <p className="text-[11px] text-text-faint mb-3 leading-relaxed max-w-[160px]">
-              Chain multiple scenes together to build a complete video.
+          <div className="px-3 py-2 text-center my-1 border-t border-border/40 shrink-0">
+            <p className="text-[11px] text-text-faint mb-1.5 leading-tight">
+              Need a sequence? Chain scenes together.
             </p>
             {onAdd && (
               <button
                 type="button"
                 onClick={onAdd}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-surface border border-border hover:border-accent hover:text-accent rounded-md transition-colors text-xs font-medium w-full justify-center"
+                className="flex items-center gap-1 px-2 py-1 bg-surface border border-border hover:border-accent hover:text-accent rounded transition-colors text-xs font-medium w-full justify-center"
               >
-                <Plus size={14} />
+                <Plus size={13} />
                 Add Scene
               </button>
             )}

@@ -8,11 +8,14 @@
  */
 
 import { useRef, useState } from "react";
-import { Play, Pause, SkipBack, SkipForward, ZoomIn, ZoomOut } from "lucide-react";
+import { Play, Pause, SkipBack, SkipForward, ZoomIn, ZoomOut, ChevronDown } from "lucide-react";
 import type { MotionScene, AudioTrack, SceneMarker } from "../types/motion";
 import { Waveform } from "./audio/WaveformCanvas";
 
 interface TimelineProps {
+  /** Optional — collapse the timeline to a header bar. Optional so the
+   *  component still works anywhere it isn't collapsible. */
+  onCollapse?: () => void;
   scene: MotionScene;
   activeAudioTrack?: AudioTrack;
   playheadMs: number;
@@ -75,6 +78,7 @@ export function Timeline({
   onAddSceneMarker,
   onUpdateSceneMarker,
   onDeleteSceneMarker,
+  onCollapse,
 }: TimelineProps) {
   const [pxPerSec, setPxPerSec] = useState(80);
   const trackRef = useRef<HTMLDivElement>(null);
@@ -96,6 +100,10 @@ export function Timeline({
   }
 
   function handleRulerClick(e: React.MouseEvent) {
+    // Same reasoning as the disabled transport: scrubbing an empty scene
+    // moves a playhead across nothing. Gating only the buttons would leave
+    // the ruler as a way around them.
+    if (isEmpty) return;
     const rect = trackRef.current!.getBoundingClientRect();
     onScrub(Math.max(0, pxToMs(e.clientX - rect.left)));
   }
@@ -195,37 +203,65 @@ export function Timeline({
   const width = Math.max(600, msToPx(scene.duration_ms) + 40);
   const secondMarks = Array.from({ length: Math.ceil(durationSec) + 1 }, (_, i) => i);
 
+  // An empty scene has nothing to play. Offering a working transport there
+  // means the playhead sweeps five seconds of blank canvas, which reads as
+  // the app playing something that doesn't exist. Audio counts as content —
+  // a voiceover-only scene is legitimate and should be playable.
+  const isEmpty = scene.layers.length === 0 && scene.audio_tracks.length === 0;
+
   return (
     <div className="flex flex-col h-full">
       <div className="h-9 shrink-0 border-b border-border flex items-center gap-1 px-2">
         <button
           type="button"
-          title="Previous frame"
+          title={isEmpty ? "Nothing to play yet — add a layer first" : "Previous frame"}
+          disabled={isEmpty}
           onClick={() => onScrub(Math.max(0, playheadMs - FRAME_MS))}
-          className="p-1 rounded hover:bg-surface-hover text-text-muted hover:text-text"
+          className="p-1 rounded hover:bg-surface-hover text-text-muted hover:text-text
+                     disabled:opacity-30 disabled:hover:bg-transparent disabled:cursor-not-allowed"
         >
           <SkipBack size={14} />
         </button>
         <button
           type="button"
-          title={isPlaying ? "Pause" : "Play"}
+          title={isEmpty ? "Nothing to play yet — add a layer first" : isPlaying ? "Pause" : "Play"}
+          disabled={isEmpty}
           onClick={onTogglePlay}
-          className="p-1 rounded hover:bg-surface-hover text-text-muted hover:text-text"
+          className="p-1 rounded hover:bg-surface-hover text-text-muted hover:text-text
+                     disabled:opacity-30 disabled:hover:bg-transparent disabled:cursor-not-allowed"
         >
           {isPlaying ? <Pause size={14} /> : <Play size={14} />}
         </button>
         <button
           type="button"
-          title="Next frame"
+          title={isEmpty ? "Nothing to play yet — add a layer first" : "Next frame"}
+          disabled={isEmpty}
           onClick={() => onScrub(Math.min(scene.duration_ms, playheadMs + FRAME_MS))}
-          className="p-1 rounded hover:bg-surface-hover text-text-muted hover:text-text"
+          className="p-1 rounded hover:bg-surface-hover text-text-muted hover:text-text
+                     disabled:opacity-30 disabled:hover:bg-transparent disabled:cursor-not-allowed"
         >
           <SkipForward size={14} />
         </button>
-        <span className="text-xs text-text-faint tabular-nums px-2">
-          {(playheadMs / 1000).toFixed(2)}s / {(scene.duration_ms / 1000).toFixed(2)}s
-        </span>
+        {isEmpty ? (
+          <span className="text-xs text-text-faint px-2">
+            Add a layer to start building — the timeline activates then.
+          </span>
+        ) : (
+          <span className="text-xs text-text-faint tabular-nums px-2">
+            {(playheadMs / 1000).toFixed(2)}s / {(scene.duration_ms / 1000).toFixed(2)}s
+          </span>
+        )}
         <div className="flex-1" />
+        {onCollapse && (
+          <button
+            type="button"
+            onClick={onCollapse}
+            title="Collapse timeline"
+            className="p-1 rounded hover:bg-surface-hover text-text-muted hover:text-text"
+          >
+            <ChevronDown size={14} />
+          </button>
+        )}
         <button
           type="button"
           title="Zoom out timeline"

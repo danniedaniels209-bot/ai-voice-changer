@@ -11,6 +11,9 @@ import type { AudioTrack, AudioTrackKind, AudioMarker } from "../../types/motion
 export type { AudioTrack, AudioTrackKind, AudioKeyframe, AudioMarker } from "../../types/motion";
 
 export interface AudioTrackPanelProps {
+  /** Optional — collapse this panel to a header bar. Optional so the panel
+   *  still renders anywhere it isn't collapsible. */
+  onCollapse?: () => void;
   tracks: AudioTrack[];
   activeTrackId: string | null;
   onSelect: (trackId: string) => void;

@@ -14,6 +14,7 @@ import {
   Shapes,
   Wand2,
   Spline,
+  ChevronRight,
   HelpCircle,
 } from "lucide-react";
 import { getMotionProject, saveMotionProject, uploadMotionAsset, type MotionAsset } from "../api/motion";
@@ -76,6 +77,17 @@ export function MotionEditor() {
   const [connectMode, setConnectMode] = useState(false);
   const [connectFrom, setConnectFrom] = useState<string | null>(null);
   const [videoImporting, setVideoImporting] = useState(false);
+  // The editor stacks fixed-height panels under the canvas. On a laptop that
+  // furniture (toolbar + audio + timeline + history) can exceed half the
+  // viewport and crush the canvas to a strip. Both bottom panels collapse to
+  // a header bar, and the choice is remembered — audio starts collapsed
+  // because most projects begin with no audio at all.
+  const [audioOpen, setAudioOpen] = useState(
+    () => localStorage.getItem("motion_audio_open") === "1",
+  );
+  const [timelineOpen, setTimelineOpen] = useState(
+    () => localStorage.getItem("motion_timeline_open") !== "0",
+  );
   const autosaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const videoInputRef = useRef<HTMLInputElement | null>(null);
   // The keydown effect below binds once (empty deps) so it doesn't rebind on
@@ -83,7 +95,13 @@ export function MotionEditor() {
   // ref is refreshed each render and read inside the handler instead.
   // Same stale-closure problem as playbackRef: the keydown effect binds once.
   const selectionRef = useRef<string[]>([]);
-  const playbackRef = useRef<{ toggle: () => void; playheadMs: number; durationMs: number }>({
+  const playbackRef = useRef<{
+    hasContent: boolean;
+    toggle: () => void;
+    playheadMs: number;
+    durationMs: number;
+  }>({
+    hasContent: false,
     toggle: () => {},
     playheadMs: 0,
     durationMs: 5000,
@@ -150,6 +168,14 @@ export function MotionEditor() {
       } else if (e.key === "Delete" || e.key === "Backspace") {
         e.preventDefault();
         dispatch({ type: "DELETE_SELECTED_LAYERS" });
+      } else if (!playbackRef.current.hasContent && (
+        e.key === " " || e.code === "Space" ||
+        e.key === "ArrowLeft" || e.key === "ArrowRight" ||
+        e.key === "Home" || e.key === "End"
+      )) {
+        // Empty scene: swallow transport keys rather than moving a playhead
+        // over nothing. preventDefault still applies so Space doesn't scroll.
+        e.preventDefault();
       } else if (e.key === " " || e.code === "Space") {
         // Space is the near-universal transport toggle in video tools. It
         // also scrolls the page by default, hence preventDefault.
@@ -188,7 +214,13 @@ export function MotionEditor() {
     dispatch({ type: "SET_PLAYHEAD", timeMs: ms }),
   );
   selectionRef.current = state.selectedLayerIds;
+  // Transport keys are disabled on an empty scene for the same reason the
+  // timeline's buttons are — nothing to play, so Space shouldn't sweep a
+  // playhead over a blank canvas.
+  const sceneHasContent =
+    !!scene && (scene.layers.length > 0 || scene.audio_tracks.length > 0);
   playbackRef.current = {
+    hasContent: sceneHasContent,
     toggle: playback.toggle,
     playheadMs: state.playheadMs,
     durationMs: scene?.duration_ms ?? 5000,
@@ -546,7 +578,7 @@ export function MotionEditor() {
       {/* ── Workspace ── */}
       <div className="flex-1 flex min-h-0">
         <div className="w-[220px] shrink-0 border-r border-border bg-surface flex flex-col">
-          <div className="h-[160px] shrink-0 border-b border-border">
+          <div className="h-[160px] shrink-0 border-b border-border overflow-hidden">
             <ScenePanel
               scenes={state.project.scenes}
               activeSceneId={state.activeSceneId}
@@ -619,7 +651,20 @@ export function MotionEditor() {
       </div>
 
       {/* ── Audio tracks ── */}
-      <div className="h-[112px] shrink-0 border-t border-border">
+      <div className={`shrink-0 border-t border-border ${audioOpen ? "h-[112px]" : ""}`}>
+        {!audioOpen ? (
+          <button
+            type="button"
+            onClick={() => { setAudioOpen(true); localStorage.setItem("motion_audio_open", "1"); }}
+            className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-text-faint hover:text-text hover:bg-surface-hover"
+          >
+            <ChevronRight size={13} />
+            <span className="uppercase tracking-wide font-semibold">Audio tracks</span>
+            {activeScene.audio_tracks.length > 0 && (
+              <span className="text-text-muted">({activeScene.audio_tracks.length})</span>
+            )}
+          </button>
+        ) : (
         <AudioTrackPanel
           tracks={activeScene.audio_tracks}
           activeTrackId={activeAudioTrackId}
@@ -633,11 +678,23 @@ export function MotionEditor() {
           onAddMarker={(trackId, timeMs) => dispatch({ type: "ADD_AUDIO_MARKER", trackId, timeMs })}
           onUpdateMarker={(trackId, markerId, patch) => dispatch({ type: "UPDATE_AUDIO_MARKER", trackId, markerId, patch })}
           onDeleteMarker={(trackId, markerId) => dispatch({ type: "DELETE_AUDIO_MARKER", trackId, markerId })}
+          onCollapse={() => { setAudioOpen(false); localStorage.setItem("motion_audio_open", "0"); }}
         />
+        )}
       </div>
 
       {/* ── Timeline ── */}
-      <div className="h-[162px] shrink-0 border-t border-border bg-surface">
+      <div className={`shrink-0 border-t border-border bg-surface ${timelineOpen ? "h-[162px]" : ""}`}>
+        {!timelineOpen ? (
+          <button
+            type="button"
+            onClick={() => { setTimelineOpen(true); localStorage.setItem("motion_timeline_open", "1"); }}
+            className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-text-faint hover:text-text hover:bg-surface-hover"
+          >
+            <ChevronRight size={13} />
+            <span className="uppercase tracking-wide font-semibold">Timeline</span>
+          </button>
+        ) : (
         <Timeline
           scene={activeScene}
           activeAudioTrack={activeScene.audio_tracks.find((t) => t.id === activeAudioTrackId)}
@@ -655,7 +712,9 @@ export function MotionEditor() {
           onUpdateSceneMarker={(markerId, patch) => dispatch({ type: "UPDATE_SCENE_MARKER", markerId, patch })}
           onDeleteSceneMarker={(markerId) => dispatch({ type: "DELETE_SCENE_MARKER", markerId })}
           onSelectKeyframe={(layerId, keyframeId) => setSelectedKeyframe({ layerId, keyframeId })}
+          onCollapse={() => { setTimelineOpen(false); localStorage.setItem("motion_timeline_open", "0"); }}
         />
+        )}
       </div>
 
       {/* ── History scrubber ── */}

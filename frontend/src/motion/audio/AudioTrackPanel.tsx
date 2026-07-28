@@ -1,5 +1,5 @@
 import { useState, useRef } from "react";
-import { Mic, Music, Volume2, VolumeX, Zap, Trash2, GripVertical } from "lucide-react";
+import { Mic, Music, Volume2, VolumeX, Zap, Trash2, GripVertical, ChevronDown } from "lucide-react";
 import type { AudioTrackPanelProps, AudioTrackKind, AudioTrack, AudioMarker } from "./audioTypes";
 import { Waveform } from "./WaveformCanvas";
 
@@ -106,6 +106,7 @@ export function AudioTrackPanel({
   onAddMarker,
   onUpdateMarker,
   onDeleteMarker,
+  onCollapse,
 }: AudioTrackPanelProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
 
@@ -113,7 +114,19 @@ export function AudioTrackPanel({
     <div className="flex flex-col h-full bg-surface border-r border-border">
       {/* Header */}
       <div className="px-3 py-2 border-b border-border flex items-center justify-between shrink-0">
-        <span className="text-xs font-semibold uppercase tracking-wide text-text-faint">Audio Tracks</span>
+        {onCollapse ? (
+          <button
+            type="button"
+            onClick={onCollapse}
+            title="Collapse audio tracks"
+            className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-text-faint hover:text-text"
+          >
+            <ChevronDown size={13} />
+            Audio Tracks
+          </button>
+        ) : (
+          <span className="text-xs font-semibold uppercase tracking-wide text-text-faint">Audio Tracks</span>
+        )}
         <div className="flex items-center gap-1">
           {(["voiceover", "music", "sfx"] as AudioTrackKind[]).map((kind) => {
             const KindIcon = KIND_ICONS[kind];
