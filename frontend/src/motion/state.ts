@@ -20,6 +20,7 @@ import type {
   AudioMarker,
 } from "../types/motion";
 import { resolveTransformAtTime } from "./easing";
+import { wouldCreateCycle, getDescendants } from "./layerTree";
 
 const MAX_HISTORY = 50;
 
@@ -328,14 +329,20 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
 
     case "DELETE_SELECTED_LAYERS": {
       if (state.selectedLayerIds.length === 0) return state;
+      // Cascade: deleting a folder also deletes all its descendants (direct
+      // children, grandchildren, etc.). Collect all affected ids first.
+      const scene = activeScene(state.project, state.activeSceneId);
       const toDelete = new Set(state.selectedLayerIds);
-      const project = withScene(state.project, state.activeSceneId, (scene) => ({
-        ...scene,
-        layers: scene.layers.filter((l) => !toDelete.has(l.id)),
-        // Also drop connectors whose source or target just disappeared —
-        // an orphaned connector pointing at a dead layer id would render
-        // fine now and silently break when the project is reopened.
-        connectors: dropOrphanConnectors(scene, toDelete),
+      for (const id of state.selectedLayerIds) {
+        for (const descId of getDescendants(id, scene.layers)) {
+          toDelete.add(descId);
+        }
+      }
+      const project = withScene(state.project, state.activeSceneId, (s) => ({
+        ...s,
+        layers: s.layers.filter((l) => !toDelete.has(l.id)),
+        // Also drop connectors whose source or target just disappeared.
+        connectors: dropOrphanConnectors(s, toDelete),
       }));
       return { ...state, ...snapshot(state), project, selectedLayerIds: [], dirty: true };
     }
@@ -351,6 +358,15 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
     }
 
     case "UPDATE_LAYER": {
+      // Cycle prevention for parent_id: reject changes that would make a
+      // layer its own ancestor. Also reject setting parent_id to an id that
+      // doesn't exist. Pure check, no UI dependency.
+      if ("parent_id" in action.patch) {
+        const scene = activeScene(state.project, state.activeSceneId);
+        if (wouldCreateCycle(scene.layers, action.layerId, action.patch.parent_id ?? null)) {
+          return state;
+        }
+      }
       const project = withScene(state.project, state.activeSceneId, (scene) =>
         withLayer(scene, action.layerId, (layer) => ({ ...layer, ...action.patch })),
       );

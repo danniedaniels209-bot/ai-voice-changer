@@ -58,9 +58,22 @@ export function ScenePanel({
 
       <div className="flex-1 overflow-y-auto">
         {scenes.length === 0 && (
-          <p className="text-xs text-text-faint px-3 py-4 text-center">
-            No scenes yet — add one from the header.
-          </p>
+          <div className="flex flex-col items-center justify-center p-6 text-center mt-4">
+            <h4 className="text-sm font-medium text-text mb-1">No scenes</h4>
+            <p className="text-xs text-text-faint mb-4 leading-relaxed">
+              Create a scene to start animating.
+            </p>
+            {onAdd && (
+              <button
+                type="button"
+                onClick={onAdd}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-accent text-white rounded hover:opacity-90 transition-opacity text-xs font-medium"
+              >
+                <Plus size={14} />
+                Add Scene
+              </button>
+            )}
+          </div>
         )}
 
         {scenes.map((scene) => {
@@ -134,6 +147,25 @@ export function ScenePanel({
             </div>
           );
         })}
+
+        {scenes.length === 1 && (
+          <div className="flex flex-col items-center justify-center p-4 text-center mt-4 border-t border-border/50">
+            <h4 className="text-xs font-medium text-text mb-1">Need a sequence?</h4>
+            <p className="text-[11px] text-text-faint mb-3 leading-relaxed max-w-[160px]">
+              Chain multiple scenes together to build a complete video.
+            </p>
+            {onAdd && (
+              <button
+                type="button"
+                onClick={onAdd}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-surface border border-border hover:border-accent hover:text-accent rounded-md transition-colors text-xs font-medium w-full justify-center"
+              >
+                <Plus size={14} />
+                Add Scene
+              </button>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

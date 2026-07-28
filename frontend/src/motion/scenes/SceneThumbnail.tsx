@@ -4,6 +4,7 @@ import type { MotionLayer, MotionScene, Transform } from "../../types/motion";
 import type { GradientFill } from "../gradients/gradientTypes";
 import type { ShadowEffect } from "../shadowfx/shadowTypes";
 import { lineHeight, wrapTextToLines } from "../textWrap";
+import { isEffectivelyHidden } from "../layerTree";
 import { resolveConnectorEndpoints } from "../connectorGeometry";
 import { Connector } from "../connector/Connector";
 import type { ConnectorSpec } from "../connector/ConnectorTypes";
@@ -99,8 +100,8 @@ function resolveFill(layer: MotionLayer, solidFill: string): string {
   return solidFill;
 }
 
-function renderLayer(layer: MotionLayer, sceneDurationMs: number): React.ReactNode {
-  if (layer.hidden) return null;
+function renderLayer(layer: MotionLayer, sceneDurationMs: number, layers: MotionLayer[]): React.ReactNode {
+  if (isEffectivelyHidden(layer, layers)) return null;
   // The thumbnail claims to be the scene's first frame, so a layer whose
   // time window starts later genuinely isn't in it. Showing it anyway would
   // make the thumbnail disagree with both the canvas and the export.
@@ -314,7 +315,7 @@ export function SceneThumbnail({ scene, width, height }: SceneThumbnailProps) {
           ))}
         </defs>
         <rect width={sceneW} height={sceneH} fill={scene.background_color} />
-        {scene.layers.map((layer) => renderLayer(layer, scene.duration_ms))}
+        {scene.layers.map((layer) => renderLayer(layer, scene.duration_ms, scene.layers))}
         {(scene.connectors ?? []).map((conn) => {
           const resolved = resolveConnectorEndpoints(conn, scene.layers, 0);
           if (!resolved) return null;

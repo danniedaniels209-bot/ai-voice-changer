@@ -23,6 +23,7 @@ import { Connector } from "./connector/Connector";
 import type { ConnectorSpec } from "./connector/ConnectorTypes";
 import { computeDragSnap, computeResizeSnap } from "./guides";
 import type { GuideLine } from "./guides";
+import { isEffectivelyHidden, isEffectivelyLocked } from "./layerTree";
 
 type ResizeHandle = "nw" | "ne" | "sw" | "se";
 
@@ -227,7 +228,7 @@ export function MotionCanvas({
   }
 
   function handleLayerMouseDown(e: React.MouseEvent, layer: MotionLayer) {
-    if (layer.locked) return;
+    if (isEffectivelyLocked(layer, scene.layers)) return;
     e.stopPropagation();
     // In connect mode a click picks a connector endpoint rather than
     // selecting or dragging — otherwise the first click would start a drag
@@ -338,7 +339,9 @@ export function MotionCanvas({
   }
 
   function renderLayer(layer: MotionLayer) {
-    if (layer.hidden) return null;
+    // Effective-hidden check walks the parent chain so hiding a folder
+    // cascades to all descendants — same for all three renderers.
+    if (isEffectivelyHidden(layer, scene.layers)) return null;
     // Layers can be given a scene-time window (dragged/trimmed on the
     // timeline); outside it they aren't on screen. Gating here rather than
     // filtering the list keeps layer order and the <defs> block untouched.

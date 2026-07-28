@@ -201,6 +201,9 @@ export interface MotionLayer {
   transform: Transform;
   locked: boolean;
   hidden: boolean;
+  color?: string | null;
+  parent_id?: string | null;
+  is_folder?: boolean;
   rect: RectLayerProps | null;
   ellipse: EllipseLayerProps | null;
   text: TextLayerProps | null;

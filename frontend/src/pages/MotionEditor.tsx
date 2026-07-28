@@ -36,6 +36,7 @@ import { ShortcutsOverlay } from "../motion/help/ShortcutsOverlay";
 import { HistoryPanel } from "../motion/history/HistoryPanel";
 import { TransitionModal } from "../motion/transitions/TransitionModal";
 import { applyTransitionToScene } from "../motion/transitions/applyTransitionToScene";
+import { OnboardingWalkthrough } from "../motion/onboarding/OnboardingWalkthrough";
 import type { AnimatableProperty, LayerType, MotionLayer, Transform } from "../types/motion";
 
 const INITIAL_STATE: EditorState = {
@@ -649,6 +650,8 @@ export function MotionEditor() {
         }}
         className="shrink-0"
       />
+
+      <OnboardingWalkthrough />
     </div>
   );
 }

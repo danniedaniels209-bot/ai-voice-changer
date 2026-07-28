@@ -14,6 +14,7 @@ import { isLayerVisibleAt } from "../types/motion";
 import type { GradientFill } from "../motion/gradients/gradientTypes";
 import type { ShadowEffect } from "../motion/shadowfx/shadowTypes";
 import { lineHeight, wrapTextToLines } from "../motion/textWrap";
+import { isEffectivelyHidden } from "../motion/layerTree";
 import { resolveConnectorEndpoints } from "../motion/connectorGeometry";
 import { Connector } from "../motion/connector/Connector";
 import type { ConnectorSpec } from "../motion/connector/ConnectorTypes";
@@ -162,8 +163,8 @@ function resolveFill(
   return solidFill;
 }
 
-function renderLayer(layer: MotionLayer, timeMs: number, sceneDurationMs: number) {
-  if (layer.hidden) return null;
+function renderLayer(layer: MotionLayer, timeMs: number, sceneDurationMs: number, layers: MotionLayer[]) {
+  if (isEffectivelyHidden(layer, layers)) return null;
   // Same scene-time visibility gate as the editor canvas. This has to match
   // MotionCanvas exactly or the export shows layers the editor didn't.
   if (!isLayerVisibleAt(layer, sceneDurationMs, timeMs)) return null;
@@ -525,7 +526,7 @@ export function RenderFrame() {
             </Fragment>
           ))}
         </defs>
-        {scene.layers.map((layer) => renderLayer(layer, requestedTimeMs, scene.duration_ms))}
+        {scene.layers.map((layer) => renderLayer(layer, requestedTimeMs, scene.duration_ms, scene.layers))}
         {/* Connectors, drawn after the layers so they sit on top — identical
             to MotionCanvas.tsx. Without this block connectors are visible in
             the editor and ABSENT from the export, which is the canvas/export

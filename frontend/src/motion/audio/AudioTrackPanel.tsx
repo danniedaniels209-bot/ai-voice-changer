@@ -135,12 +135,30 @@ export function AudioTrackPanel({
       {/* Track List */}
       <div className="flex-1 overflow-y-auto">
         {tracks.length === 0 && (
-          <div className="flex flex-col items-center justify-center h-full px-4 text-center">
-            <div className="w-16 h-16 rounded-full bg-surface-hover flex items-center justify-center mb-3">
-              <Music size={24} className="text-text-faint" />
+          <div className="flex flex-col items-center justify-center h-full px-4 text-center mt-6">
+            <div className="w-12 h-12 rounded-full bg-surface-hover flex items-center justify-center mb-3 text-text-faint">
+              <Music size={24} />
             </div>
-            <p className="text-xs text-text-faint mb-1">No audio tracks yet</p>
-            <p className="text-[10px] text-text-faint/70">Click + to add voice-over, music, or sound effects</p>
+            <h4 className="text-sm font-medium text-text mb-1">No audio tracks</h4>
+            <p className="text-xs text-text-faint mb-5 leading-relaxed max-w-[200px]">
+              Add voice-overs, music, or sound effects to bring your animation to life.
+            </p>
+            <div className="flex flex-col gap-2 w-[140px]">
+              {(["voiceover", "music", "sfx"] as AudioTrackKind[]).map((kind) => {
+                const KindIcon = KIND_ICONS[kind];
+                return (
+                  <button
+                    key={kind}
+                    type="button"
+                    onClick={() => onAddTrack(kind)}
+                    className="flex items-center gap-2 px-3 py-2 bg-surface border border-border rounded-md hover:border-accent hover:text-accent transition-colors text-xs font-medium w-full text-left"
+                  >
+                    <KindIcon size={14} className={KIND_COLORS[kind]} />
+                    Add {KIND_LABELS[kind]}
+                  </button>
+                );
+              })}
+            </div>
           </div>
         )}
 

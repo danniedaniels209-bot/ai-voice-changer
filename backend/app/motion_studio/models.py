@@ -181,6 +181,9 @@ class MotionLayer(BaseModel):
     transform: Transform = Field(default_factory=Transform)
     locked: bool = False
     hidden: bool = False
+    color: str | None = None
+    parent_id: str | None = None
+    is_folder: bool = False
     rect: RectLayerProps | None = None
     ellipse: EllipseLayerProps | None = None
     text: TextLayerProps | None = None
