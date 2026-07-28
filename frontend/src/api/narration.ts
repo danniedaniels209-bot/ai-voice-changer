@@ -36,6 +36,13 @@ export interface AnalyzeResult {
 }
 
 export interface NarrationControls {
+  /** Optional human-expression pass. Adds the per-sentence variation and
+   *  paragraph declination a real speaker has — without it every sentence
+   *  of the same type is delivered identically, which is what makes good
+   *  TTS still read as synthetic. Deterministic: the same script always
+   *  produces the same result, so you can iterate on wording without the
+   *  read changing underneath you. */
+  human_expression?: boolean;
   speed: number;
   pitch: number;
   energy: number;

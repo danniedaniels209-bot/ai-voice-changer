@@ -141,9 +141,12 @@ export function MotionEditor() {
       } else if (mod && e.key.toLowerCase() === "d") {
         // Ctrl/Cmd+D duplicates the selection. Browsers bind this to
         // "bookmark this page", so preventDefault is mandatory.
-        e.preventDefault();
         const id = selectionRef.current[0];
         if (id) dispatch({ type: "DUPLICATE_LAYER", layerId: id });
+      } else if (e.key.toLowerCase() === "s" && !mod && !e.shiftKey) {
+        e.preventDefault();
+        const id = selectionRef.current[0];
+        if (id) dispatch({ type: "SPLIT_LAYER", layerId: id, timeMs: playbackRef.current.playheadMs });
       } else if (e.key === "Delete" || e.key === "Backspace") {
         e.preventDefault();
         dispatch({ type: "DELETE_SELECTED_LAYERS" });
@@ -648,6 +651,9 @@ export function MotionEditor() {
           }
           onDeleteKeyframe={(layerId, keyframeId) => dispatch({ type: "DELETE_KEYFRAME", layerId, keyframeId })}
           onTogglePlay={playback.toggle}
+          onAddSceneMarker={(timeMs) => dispatch({ type: "ADD_SCENE_MARKER", timeMs: Math.round(timeMs) })}
+          onUpdateSceneMarker={(markerId, patch) => dispatch({ type: "UPDATE_SCENE_MARKER", markerId, patch })}
+          onDeleteSceneMarker={(markerId) => dispatch({ type: "DELETE_SCENE_MARKER", markerId })}
           onSelectKeyframe={(layerId, keyframeId) => setSelectedKeyframe({ layerId, keyframeId })}
         />
       </div>

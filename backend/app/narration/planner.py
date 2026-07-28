@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from app.narration.humanize import Delivery, humanize
 from app.narration.pronunciation import to_speakable
 from app.narration.script_analyzer import Segment
 
@@ -66,6 +67,9 @@ class Controls:
     stability: int = 70  # 0..100 (chatterbox identity consistency)
     naturalness: int = 70  # 0..100 -> crossfades/pause easing at assembly
     pause_scale: int = 100  # 50..200 percent
+    # Optional human-expression pass (see narration/humanize.py). Off by
+    # default so existing scripts render exactly as they did before.
+    human_expression: bool = False
 
 
 @dataclass
@@ -111,6 +115,23 @@ def plan(
     expression_scale = controls.expression / 50.0  # 50 = as designed
     planned: list[PlannedSegment] = []
 
+    # Where each sentence sits within its paragraph, 0.0 (first) to 1.0
+    # (last) — drives the pitch/energy declination in the humanize pass.
+    # Precomputed because a segment can't know its paragraph's length.
+    paragraph_pos: dict[int, float] = {}
+    if controls.human_expression:
+        run: list[int] = []
+        for seg in segments:
+            run.append(seg.id)
+            if seg.is_paragraph_end or seg.kind != "sentence":
+                span = max(1, len(run) - 1)
+                for i, sid in enumerate(run):
+                    paragraph_pos[sid] = i / span
+                run = []
+        span = max(1, len(run) - 1)
+        for i, sid in enumerate(run):
+            paragraph_pos[sid] = i / span
+
     for seg in segments:
         deltas = _TYPE_DELTAS.get(seg.sentence_type, _TYPE_DELTAS["statement"])
         # Emphasis words present -> a measured energy/expression lift.
@@ -127,6 +148,27 @@ def plan(
         voice = quote_voice if (quote_voice and seg.kind in ("quote", "dialogue")) else narrator_voice
 
         exaggeration = base["exaggeration"] + deltas["exaggeration"] * expression_scale + emphasis_boost * 0.06
+
+        delivery = Delivery(
+            rate_pct=int(base["rate"] + deltas["rate"] * expression_scale + controls.speed
+                         + (-10 if seg.kind == "heading" else 0)),
+            pitch_hz=int(base["pitch"] + deltas["pitch"] * expression_scale + controls.pitch),
+            energy_pct=int(base["energy"] + deltas["energy"] * expression_scale
+                           + controls.energy + emphasis_boost * 5),
+            exaggeration=round(max(0.0, min(1.0, exaggeration)), 2),
+            pause_after=round(pause, 2),
+        )
+        if controls.human_expression and not skipped:
+            # Seeded on the text itself so the same sentence always reads the
+            # same way — see humanize.py on why this is deterministic.
+            delivery = humanize(
+                delivery,
+                seed_text=f"{seg.id}:{seg.text}",
+                position_in_paragraph=paragraph_pos.get(seg.id, 0.0),
+                emphasis_word_count=len(seg.emphasis_words),
+                expression=controls.expression,
+            )
+
         planned.append(
             PlannedSegment(
                 id=seg.id,
@@ -134,13 +176,11 @@ def plan(
                 text=seg.text,
                 speak_text=speak,
                 voice=voice,
-                rate_pct=int(base["rate"] + deltas["rate"] * expression_scale + controls.speed
-                             + (-10 if seg.kind == "heading" else 0)),
-                pitch_hz=int(base["pitch"] + deltas["pitch"] * expression_scale + controls.pitch),
-                energy_pct=int(base["energy"] + deltas["energy"] * expression_scale
-                               + controls.energy + emphasis_boost * 5),
-                exaggeration=round(max(0.0, min(1.0, exaggeration)), 2),
-                pause_after=round(pause, 2),
+                rate_pct=delivery.rate_pct,
+                pitch_hz=delivery.pitch_hz,
+                energy_pct=delivery.energy_pct,
+                exaggeration=delivery.exaggeration,
+                pause_after=delivery.pause_after,
                 skipped=skipped or not speak.strip(),
                 meta={
                     "sentence_type": seg.sentence_type,

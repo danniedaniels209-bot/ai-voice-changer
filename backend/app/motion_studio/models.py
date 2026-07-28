@@ -139,6 +139,13 @@ class AudioMarker(BaseModel):
     color: str
 
 
+class SceneMarker(BaseModel):
+    id: str
+    time_ms: int
+    label: str
+    color: str
+
+
 class AudioTrack(BaseModel):
     id: str
     name: str
@@ -267,6 +274,7 @@ class MotionScene(BaseModel):
     background_color: str = "#0B0B0F"
     layers: list[MotionLayer] = Field(default_factory=list)
     audio_tracks: list[AudioTrack] = Field(default_factory=list)
+    markers: list[SceneMarker] = Field(default_factory=list)
     # Optional connectors between layers. Flat list per scene — a connector
     # is a relationship between two layers, so storing it on either side
     # would create an asymmetry around which side owns deletion; a flat

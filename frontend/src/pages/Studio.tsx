@@ -40,6 +40,7 @@ const KIND_BADGES: Record<string, string> = {
 const DEFAULT_CONTROLS: NarrationControls = {
   speed: 0, pitch: 0, energy: 0, expression: 50,
   stability: 70, naturalness: 70, pause_scale: 100,
+  human_expression: false,
 };
 
 const CONTENT_TYPES = ["Tutorial", "Documentary", "YouTube", "Podcast", "News", "Technical", "Story", "Advertisement"];
@@ -267,9 +268,15 @@ export function Studio() {
     setResult(null);
   }
 
+  // Only the numeric controls are sliders — human_expression is a boolean,
+  // so restrict the key type rather than casting at each use.
+  type NumericControl = {
+    [K in keyof NarrationControls]-?: NarrationControls[K] extends number | undefined ? K : never;
+  }[keyof NarrationControls];
+
   const slider = (
     label: string,
-    key: keyof NarrationControls,
+    key: NumericControl,
     min: number,
     max: number,
   ) => (
@@ -531,6 +538,27 @@ export function Studio() {
           {slider("Naturalness", "naturalness", 0, 100)}
           {slider("Pause length", "pause_scale", 50, 200)}
         </div>
+
+        <label className="flex items-start gap-2.5 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={!!controls.human_expression}
+            onChange={(e) => {
+              setControls({ ...controls, human_expression: e.target.checked });
+              setResult(null);
+            }}
+            className="mt-0.5 accent-accent"
+          />
+          <span>
+            <span className="block text-sm">Human expression</span>
+            <span className="block text-xs text-text-muted">
+              Varies pace, pitch and emphasis between sentences, and lets delivery
+              settle through a paragraph the way a person's does. Without it every
+              sentence of the same type is read identically. Scales with Expression;
+              the same script always reads the same way.
+            </span>
+          </span>
+        </label>
 
         <Button onClick={handleAnalyze} disabled={!script.trim() || busy !== null}>
           {busy === "Analyzing script..." ? "Analyzing..." : result ? "Re-analyze" : "Analyze script"}

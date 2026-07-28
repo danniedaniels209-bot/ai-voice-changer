@@ -9,7 +9,7 @@
 
 import { useRef, useState } from "react";
 import { Play, Pause, SkipBack, SkipForward, ZoomIn, ZoomOut } from "lucide-react";
-import type { MotionScene, AudioTrack } from "../types/motion";
+import type { MotionScene, AudioTrack, SceneMarker } from "../types/motion";
 import { Waveform } from "./audio/WaveformCanvas";
 
 interface TimelineProps {
@@ -31,6 +31,9 @@ interface TimelineProps {
   // simply won't be draggable until those props are passed).
   onRetimeLayer?: (layerId: string, deltaMs: number) => void;
   onTrimLayer?: (layerId: string, startMs: number | null, endMs: number | null) => void;
+  onAddSceneMarker?: (timeMs: number) => void;
+  onUpdateSceneMarker?: (markerId: string, patch: Partial<SceneMarker>) => void;
+  onDeleteSceneMarker?: (markerId: string) => void;
 }
 
 const ROW_HEIGHT = 28;
@@ -69,11 +72,16 @@ export function Timeline({
   onRetimeLayer,
   onTrimLayer,
   onSelectKeyframe,
+  onAddSceneMarker,
+  onUpdateSceneMarker,
+  onDeleteSceneMarker,
 }: TimelineProps) {
   const [pxPerSec, setPxPerSec] = useState(80);
   const trackRef = useRef<HTMLDivElement>(null);
   const dragKeyframe = useRef<{ layerId: string; keyframeId: string } | null>(null);
   const [dragPreviewMs, setDragPreviewMs] = useState<number | null>(null);
+  const dragMarker = useRef<string | null>(null);
+  const [dragMarkerPreviewMs, setDragMarkerPreviewMs] = useState<number | null>(null);
   const barDrag = useRef<BarDrag | null>(null);
   const [barPreview, setBarPreview] = useState<{ start: number; end: number } | null>(null);
 
@@ -133,6 +141,10 @@ export function Timeline({
       setDragPreviewMs(cursorMs);
       return;
     }
+    if (dragMarker.current) {
+      setDragMarkerPreviewMs(cursorMs);
+      return;
+    }
     const drag = barDrag.current;
     if (!drag) return;
 
@@ -156,6 +168,12 @@ export function Timeline({
     }
     dragKeyframe.current = null;
     setDragPreviewMs(null);
+
+    if (dragMarker.current && dragMarkerPreviewMs !== null && onUpdateSceneMarker) {
+      onUpdateSceneMarker(dragMarker.current, { time_ms: Math.round(dragMarkerPreviewMs) });
+    }
+    dragMarker.current = null;
+    setDragMarkerPreviewMs(null);
 
     const drag = barDrag.current;
     const preview = barPreview;
@@ -234,6 +252,10 @@ export function Timeline({
             className="relative border-b border-border cursor-pointer select-none"
             style={{ height: RULER_HEIGHT }}
             onClick={handleRulerClick}
+            onDoubleClick={(e) => {
+              const rect = trackRef.current!.getBoundingClientRect();
+              if (onAddSceneMarker) onAddSceneMarker(Math.max(0, pxToMs(e.clientX - rect.left)));
+            }}
           >
             {secondMarks.map((s) => (
               <div
@@ -248,8 +270,42 @@ export function Timeline({
               className="absolute top-0 bottom-0 w-px bg-accent pointer-events-none z-10"
               style={{ left: msToPx(playheadMs) }}
             >
-              <div className="w-2.5 h-2.5 -ml-[5px] -mt-0.5 bg-accent rotate-45" />
+              <div className="absolute top-0 -left-1.5 w-0 h-0 border-l-[6px] border-r-[6px] border-t-[8px] border-l-transparent border-r-transparent border-t-accent" />
             </div>
+
+            {(scene.markers || []).map((m) => {
+              const dragging = dragMarker.current === m.id;
+              const time = dragging && dragMarkerPreviewMs !== null ? dragMarkerPreviewMs : m.time_ms;
+              return (
+                <div
+                  key={m.id}
+                  className="absolute top-0 bottom-0 flex flex-col items-center group/marker z-20"
+                  style={{ left: msToPx(time), transform: "translateX(-50%)" }}
+                  onMouseDown={(e) => {
+                    e.stopPropagation();
+                    dragMarker.current = m.id;
+                  }}
+                  onDoubleClick={(e) => {
+                    e.stopPropagation();
+                    const newName = prompt("Rename marker (empty to delete):", m.label);
+                    if (newName) {
+                      if (onUpdateSceneMarker) onUpdateSceneMarker(m.id, { label: newName });
+                    } else if (newName === "") {
+                      if (onDeleteSceneMarker) onDeleteSceneMarker(m.id);
+                    }
+                  }}
+                  title={m.label}
+                >
+                  <div 
+                    className="w-0 h-0 border-l-[6px] border-r-[6px] border-t-[8px] border-l-transparent border-r-transparent cursor-ew-resize opacity-80 hover:opacity-100" 
+                    style={{ borderTopColor: m.color || "#3B82F6" }} 
+                  />
+                  <div className="text-[10px] whitespace-nowrap bg-background/90 px-1 border border-border rounded text-text font-medium mt-0.5 opacity-0 group-hover/marker:opacity-100 pointer-events-none">
+                    {m.label}
+                  </div>
+                </div>
+              );
+            })}
           </div>
 
           {/* Layer rows */}

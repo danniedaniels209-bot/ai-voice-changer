@@ -18,6 +18,7 @@ import type {
   MotionScene,
   Transform,
   AudioMarker,
+  SceneMarker,
 } from "../types/motion";
 import { resolveTransformAtTime } from "./easing";
 import { wouldCreateCycle, getDescendants } from "./layerTree";
@@ -92,6 +93,10 @@ export type EditorAction =
   | { type: "ADD_AUDIO_MARKER"; trackId: string; timeMs: number }
   | { type: "UPDATE_AUDIO_MARKER"; trackId: string; markerId: string; patch: Partial<AudioMarker> }
   | { type: "DELETE_AUDIO_MARKER"; trackId: string; markerId: string }
+  | { type: "ADD_SCENE_MARKER"; timeMs: number }
+  | { type: "UPDATE_SCENE_MARKER"; markerId: string; patch: Partial<SceneMarker> }
+  | { type: "DELETE_SCENE_MARKER"; markerId: string }
+  | { type: "SPLIT_LAYER"; layerId: string; timeMs: number }
   | { type: "UNDO" }
   | { type: "REDO" };
 
@@ -720,6 +725,61 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
         })),
       );
       return { ...state, ...snapshot(state), project, dirty: true };
+    }
+
+    case "ADD_SCENE_MARKER": {
+      const project = withScene(state.project, state.activeSceneId, (scene) => ({
+        ...scene,
+        markers: [
+          ...(scene.markers || []),
+          { id: newId(), time_ms: action.timeMs, label: "Marker", color: "#3B82F6" },
+        ],
+      }));
+      return { ...state, ...snapshot(state), project, dirty: true };
+    }
+
+    case "UPDATE_SCENE_MARKER": {
+      const project = withScene(state.project, state.activeSceneId, (scene) => ({
+        ...scene,
+        markers: (scene.markers || []).map((m) =>
+          m.id === action.markerId ? { ...m, ...action.patch } : m
+        ),
+      }));
+      return { ...state, ...snapshot(state), project, dirty: true };
+    }
+
+    case "DELETE_SCENE_MARKER": {
+      const project = withScene(state.project, state.activeSceneId, (scene) => ({
+        ...scene,
+        markers: (scene.markers || []).filter((m) => m.id !== action.markerId),
+      }));
+      return { ...state, ...snapshot(state), project, dirty: true };
+    }
+
+    case "SPLIT_LAYER": {
+      const { layerId, timeMs } = action;
+      let newProject = state.project;
+      newProject = withScene(newProject, state.activeSceneId, (scene) => {
+        const idx = scene.layers.findIndex((l) => l.id === layerId);
+        if (idx === -1) return scene;
+        const layerA = scene.layers[idx];
+        const layerB = {
+          ...layerA,
+          id: newId(),
+          name: `${layerA.name} (Part 2)`,
+          visible_start_ms: timeMs,
+          keyframes: layerA.keyframes.map((k) => ({ ...k, id: newId() })),
+        };
+        const updatedLayerA = {
+          ...layerA,
+          visible_end_ms: timeMs,
+        };
+        const newLayers = [...scene.layers];
+        newLayers[idx] = updatedLayerA;
+        newLayers.splice(idx + 1, 0, layerB);
+        return { ...scene, layers: newLayers };
+      });
+      return { ...state, ...snapshot(state), project: newProject, dirty: true };
     }
 
     case "UNDO": {
