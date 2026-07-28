@@ -59,6 +59,20 @@ Open the app (either your local frontend, or the printed URL directly with
 Untick the box any time to switch back to your own computer. The setting is
 per-device and touches nothing else.
 
+### Motion Studio is the exception
+
+Voice conversion works fine as local-UI-plus-remote-GPU, because only the
+audio crosses the wire. Motion Studio does not: exporting renders every
+frame in a headless browser running *on the session machine*, against a
+project stored *on the session machine*. Pointing your local frontend at the
+cloud backend leaves the project on your laptop, where the renderer can't
+see it.
+
+So for Motion Studio, open the printed URL directly (`<url>/?token=...`) and
+work there. The setup script installs Chromium and ffmpeg for this; if the
+Chromium install fails it says so explicitly rather than letting you find
+out several minutes into a render.
+
 ## What to expect
 
 - First conversion of a session downloads the models (~6 GB) at datacenter

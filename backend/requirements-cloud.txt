@@ -62,3 +62,11 @@ edge-tts==7.2.8
 
 # --- Narration Studio ---
 python-docx==1.1.2
+
+# --- Motion Studio export ---
+# Playwright drives a headless Chromium that renders each frame of a motion
+# project; ffmpeg then stitches the frames. The browser BINARY is a separate
+# download — deploy/cloud_gpu_setup.py runs `playwright install chromium`
+# after pip, because installing the package alone leaves exports failing at
+# runtime with a "browser not found" error rather than at setup time.
+playwright>=1.40.0

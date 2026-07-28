@@ -89,6 +89,28 @@ def main() -> None:
     node_path = shutil.which("node")
     print(f"Node.js: {node_path or 'not available (Python-only Coder workspace)'}")
 
+    # 2c. Motion Studio needs a real browser and ffmpeg.
+    #
+    # Exports render each frame in headless Chromium (Playwright) and stitch
+    # them with ffmpeg. Both are installed HERE rather than discovered at
+    # export time: a missing browser surfaces as a failed export several
+    # minutes into a render, which is a miserable way to find out.
+    print("Installing Motion Studio export dependencies (browser + ffmpeg)...")
+    if shutil.which("ffmpeg") is None:
+        run(["apt-get", "install", "-y", "-qq", "ffmpeg"], check=False)
+    print(f"ffmpeg: {shutil.which('ffmpeg') or 'MISSING — motion export will fail'}")
+
+    # --with-deps pulls the shared libraries headless Chromium needs; Colab
+    # and Kaggle images don't ship all of them.
+    try:
+        run([sys.executable, "-m", "playwright", "install", "--with-deps", "chromium"])
+        browser_ok = True
+    except Exception as exc:  # noqa: BLE001 — non-fatal, everything else still works
+        print(f"  Chromium install failed ({exc}).")
+        print("  Voice conversion and narration are unaffected; Motion Studio")
+        print("  EXPORT will not work until this succeeds. Re-run this cell to retry.")
+        browser_ok = False
+
     # 3. Tunnel client (cloudflared — no account needed)
     tunnel_bin = Path("/tmp/cloudflared")
     if not tunnel_bin.exists():
@@ -148,6 +170,14 @@ def main() -> None:
     print("=" * 62)
     print("\nKeep this notebook running while you convert. Models (~6 GB)")
     print("download automatically on the first conversion of the session.")
+    print()
+    print("Motion Studio: use the direct URL above rather than pointing a local")
+    print("frontend at this backend — exports render in a browser ON THIS")
+    print("machine, so the project needs to live here too.")
+    if not browser_ok:
+        print()
+        print("  WARNING: Chromium did not install, so motion EXPORT will fail.")
+        print("  Everything else works. Re-run this cell to retry.")
 
     # Keep the cell alive, echoing tunnel output quietly.
     def _drain():
