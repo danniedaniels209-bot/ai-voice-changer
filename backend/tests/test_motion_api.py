@@ -3,7 +3,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 
-from app.api.routes import motion
+from app.api.routes import motion, motion_assets
 from app.core.errors import AppError
 
 
@@ -12,8 +12,10 @@ def client(tmp_path, monkeypatch):
     from app.core.config import Paths
 
     monkeypatch.setattr(Paths, "motion_projects", tmp_path / "motion_projects")
+    monkeypatch.setattr(Paths, "motion_assets", tmp_path / "motion_assets")
     app = FastAPI()
     app.include_router(motion.router)
+    app.include_router(motion_assets.router)
 
     @app.exception_handler(AppError)
     async def app_error_handler(request: Request, exc: AppError) -> JSONResponse:
@@ -143,6 +145,48 @@ def test_export_project_creates_task_and_polls_status(client, tmp_path, monkeypa
     assert alias_resp["task_id"] == task_id
 
 
+def test_export_task_can_be_cancelled_mid_run(client, monkeypatch):
+    import time
+    from app.motion_studio import export_service
+
+    def mock_export_project(*args, **kwargs):
+        cancel_event = kwargs["cancel_event"]
+        status_cb = kwargs.get("status_callback")
+        if status_cb:
+            status_cb("rendering")
+        deadline = time.time() + 5
+        while time.time() < deadline:
+            if cancel_event.is_set():
+                raise export_service.ExportCancelled("Motion export was cancelled.")
+            time.sleep(0.01)
+        raise AssertionError("cancel_event was not set")
+
+    monkeypatch.setattr("app.motion_studio.export_service.export_project", mock_export_project)
+
+    created = client.post("/motion/projects", json={"name": "Cancel Export"}).json()
+    task_id = client.post(f"/motion/projects/{created['id']}/export", json={}).json()["task_id"]
+
+    for _ in range(50):
+        status = client.get(f"/motion/export/{task_id}").json()
+        if status["status"] == "rendering":
+            break
+        time.sleep(0.02)
+
+    cancelled = client.delete(f"/motion/exports/{task_id}")
+
+    assert cancelled.status_code == 200
+    assert cancelled.json()["status"] == "cancelled"
+    assert cancelled.json()["done"] is True
+    assert "_cancel_event" not in cancelled.json()
+
+    for _ in range(50):
+        status = client.get(f"/motion/export/{task_id}").json()
+        if status["done"]:
+            break
+        time.sleep(0.02)
+    assert status["status"] == "cancelled"
+
+
 def test_export_status_unknown_task_returns_404(client):
     resp = client.get("/motion/export/unknown-task-id-12345")
     assert resp.status_code == 404
@@ -164,6 +208,136 @@ def test_download_export(client, tmp_path, monkeypatch):
 
     resp_404 = client.get("/motion/exports/download/nonexistent.mp4")
     assert resp_404.status_code == 404
+
+
+def test_motion_asset_upload_returns_relative_url_and_serves_file(client):
+    resp = client.post(
+        "/motion/assets/upload",
+        files={"file": ("clip.mp4", b"fake video bytes", "video/mp4")},
+    )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["source_url"].startswith("/motion/assets/")
+    assert data["source_url"].endswith("/clip.mp4")
+    assert not data["source_url"].startswith("http")
+    assert data["size_bytes"] == len(b"fake video bytes")
+
+    asset_resp = client.get(data["source_url"])
+    assert asset_resp.status_code == 200
+    assert asset_resp.content == b"fake video bytes"
+
+
+def test_motion_asset_list_returns_uploaded_assets(client):
+    upload = client.post(
+        "/motion/assets/upload",
+        files={"file": ("clip.mp4", b"fake video bytes", "video/mp4")},
+    ).json()
+
+    resp = client.get("/motion/assets")
+
+    assert resp.status_code == 200
+    assets = resp.json()
+    assert len(assets) == 1
+    assert assets[0]["asset_id"] == upload["asset_id"]
+    assert assets[0]["filename"] == "clip.mp4"
+    assert assets[0]["source_url"] == upload["source_url"]
+    assert assets[0]["content_type"] == "video/mp4"
+    assert assets[0]["size_bytes"] == len(b"fake video bytes")
+    assert assets[0]["created"]
+
+
+def test_motion_asset_delete_removes_unused_asset(client):
+    upload = client.post(
+        "/motion/assets/upload",
+        files={"file": ("clip.mp4", b"fake video bytes", "video/mp4")},
+    ).json()
+
+    resp = client.delete(f"/motion/assets/{upload['asset_id']}")
+
+    assert resp.status_code == 200
+    assert resp.json() == {"deleted": True, "asset_id": upload["asset_id"]}
+    assert client.get(upload["source_url"]).status_code == 404
+    assert client.get("/motion/assets").json() == []
+
+
+def test_motion_asset_delete_refuses_asset_used_by_project(client):
+    upload = client.post(
+        "/motion/assets/upload",
+        files={"file": ("clip.mp4", b"fake video bytes", "video/mp4")},
+    ).json()
+    project = client.post("/motion/projects", json={"name": "Uses Asset"}).json()
+    scene = project["scenes"][0]
+    scene["layers"].append({
+        "id": "video-layer",
+        "name": "Clip",
+        "type": "video",
+        "transform": {"x": 0, "y": 0, "width": 320, "height": 180, "rotation": 0, "opacity": 1},
+        "video": {"source_url": upload["source_url"]},
+    })
+    save_resp = client.put(f"/motion/projects/{project['id']}", json=project)
+    assert save_resp.status_code == 200
+
+    resp = client.delete(f"/motion/assets/{upload['asset_id']}")
+
+    assert resp.status_code == 409
+    error = resp.json()["error"]
+    assert error["code"] == "motion_asset_in_use"
+    assert error["details"]["asset_id"] == upload["asset_id"]
+    assert error["details"]["references"][0]["project_id"] == project["id"]
+    assert error["details"]["references"][0]["kind"] == "layer"
+    assert client.get(upload["source_url"]).status_code == 200
+
+
+def test_motion_asset_upload_rejects_unknown_extension(client):
+    resp = client.post(
+        "/motion/assets/upload",
+        files={"file": ("clip.exe", b"not media", "application/octet-stream")},
+    )
+
+    assert resp.status_code == 400
+
+
+def test_motion_asset_upload_rejects_mismatched_content_type(client):
+    resp = client.post(
+        "/motion/assets/upload",
+        files={"file": ("clip.mp4", b"fake video bytes", "image/png")},
+    )
+
+    assert resp.status_code == 400
+    assert resp.json()["error"]["code"] == "invalid_motion_asset"
+
+
+def test_motion_asset_upload_rejects_file_over_size_cap(client, monkeypatch):
+    class TinySettings:
+        max_upload_size_mb = 0
+
+    monkeypatch.setattr(motion_assets, "get_settings", lambda: TinySettings())
+
+    resp = client.post(
+        "/motion/assets/upload",
+        files={"file": ("clip.mp4", b"x", "video/mp4")},
+    )
+
+    assert resp.status_code == 400
+    assert "exceeds" in resp.json()["error"]["message"]
+
+
+def test_motion_asset_upload_rejects_path_traversal_filename(client):
+    resp = client.post(
+        "/motion/assets/upload",
+        files={"file": ("../clip.mp4", b"fake video bytes", "video/mp4")},
+    )
+
+    assert resp.status_code == 400
+    assert resp.json()["error"]["code"] == "invalid_motion_asset"
+
+
+def test_motion_asset_get_rejects_path_traversal_filename(client):
+    asset_id = "a" * 32
+    resp = client.get(f"/motion/assets/{asset_id}/%2E%2E")
+
+    assert resp.status_code in {400, 404}
 
 
 def test_render_frames_single_navigation(client, tmp_path, monkeypatch):
@@ -275,9 +449,16 @@ def test_export_service_gif_and_png_sequence_zip(client, tmp_path, monkeypatch):
     # Mock render_frames to create dummy frame PNGs
     def mock_render_frames(project_id, output_dir, **kwargs):
         output_dir.mkdir(parents=True, exist_ok=True)
-        f1 = output_dir / "frame_000000.png"
-        f1.write_bytes(b"\x89PNG fake png data")
-        return [f1]
+        fps = kwargs.get("fps", 30)
+        start_index = kwargs.get("start_index", 0)
+        suffix = "jpg" if kwargs.get("output_format") == "jpeg" else "png"
+        total = 5 * fps
+        frames = []
+        for i in range(total):
+            frame = output_dir / f"frame_{start_index + i:06d}.{suffix}"
+            frame.write_bytes(b"\x89PNG fake png data")
+            frames.append(frame)
+        return frames
 
     monkeypatch.setattr("app.motion_studio.render_service.render_frames", mock_render_frames)
 
@@ -292,7 +473,7 @@ def test_export_service_gif_and_png_sequence_zip(client, tmp_path, monkeypatch):
     with zipfile.ZipFile(zip_path, "r") as zf:
         assert "frame_000000.png" in zf.namelist()
 
-    # 2. Test GIF export with mock ffmpeg _run
+    # 2. Test GIF export with mock ffmpeg runner
     def mock_ffmpeg_run(cmd, **kwargs):
         from pathlib import Path
         gif_file = Path(cmd[-1])
@@ -300,7 +481,7 @@ def test_export_service_gif_and_png_sequence_zip(client, tmp_path, monkeypatch):
         gif_file.write_bytes(b"GIF89a fake gif data")
         return MagicMock(returncode=0)
 
-    monkeypatch.setattr("app.motion_studio.export_service._run", mock_ffmpeg_run)
+    monkeypatch.setattr("app.motion_studio.export_service._run_cancellable", mock_ffmpeg_run)
     monkeypatch.setattr("app.motion_studio.export_service.resolve_ffmpeg_binaries", lambda: ("ffmpeg", "ffprobe"))
 
     gif_path = export_service.export_project(
@@ -321,6 +502,3 @@ def test_export_service_invalid_format_raises_error(client):
             format="unsupported_format",
         )
     assert "Unsupported export format" in str(exc_info.value)
-
-
-

@@ -25,6 +25,34 @@ function elasticOut(t: number): number {
   return Math.pow(2, -10 * t) * Math.sin((t * 10 - 0.75) * c4) + 1;
 }
 
+/** Damped harmonic oscillation that settles ON 1 rather than approaching it
+ *  asymptotically. Unlike `elastic` (which is a decaying sine with a fixed
+ *  period), spring's amplitude decays exponentially and the frequency is
+ *  chosen so the motion reads as a physical settle. Overshoots 1 several
+ *  times with decreasing magnitude. */
+function springOut(t: number): number {
+  if (t === 0 || t === 1) return t;
+  const damping = 6;
+  const frequency = 12;
+  return 1 - Math.exp(-damping * t) * Math.cos(frequency * t);
+}
+
+/** Back-out: shoots past the target once, then settles. The 1.70158 constant
+ *  is the standard "back" magic number — it makes the curve overshoot by
+ *  ~10%, which reads as deliberate rather than as a bug. */
+function overshootOut(t: number): number {
+  // Endpoints returned exactly rather than computed. The polynomial is
+  // mathematically 0 at t=0, but in floating point it evaluates to 2.2e-16,
+  // and every other easing here returns a hard 0/1 (elasticOut and springOut
+  // special-case theirs too). The visual difference is nil; the point is that
+  // "every easing starts at 0 and ends at 1" stays a real invariant rather
+  // than an approximate one, so the test for it can be strict.
+  if (t === 0 || t === 1) return t;
+  const c1 = 1.70158;
+  const c3 = c1 + 1;
+  return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2);
+}
+
 const EASINGS: Record<EasingType, EasingFn> = {
   linear: (t) => t,
   ease_in: (t) => t * t,
@@ -32,6 +60,8 @@ const EASINGS: Record<EasingType, EasingFn> = {
   ease_in_out: (t) => (t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2),
   bounce: bounceOut,
   elastic: elasticOut,
+  spring: springOut,
+  overshoot: overshootOut,
 };
 
 /** t is clamped to [0,1] before easing — callers pass raw progress, not

@@ -1,7 +1,32 @@
 import { Diamond } from "lucide-react";
 import type { AnimatableProperty, MotionLayer, Transform } from "../types/motion";
+import type { GradientFill } from "./gradients/gradientTypes";
+import { GradientPicker } from "./gradients/GradientPicker";
+import type { ShadowEffect } from "./shadowfx/shadowTypes";
+import { ShadowPicker } from "./shadowfx/ShadowPicker";
 import { PresetPicker } from "./presets/PresetPicker";
 import type { PresetId } from "./presets/motionPresets";
+
+/** Default starting points for "Add gradient"/"Add shadow" — matches what
+ *  GradientPicker / ShadowPicker already consider reasonable, so the user
+ *  sees something sensible the moment the effect is added. */
+const DEFAULT_GRADIENT: GradientFill = {
+  type: "linear",
+  angle_deg: 90,
+  stops: [
+    { offset: 0, color: "#4F46E5" },
+    { offset: 1, color: "#A855F7" },
+  ],
+};
+
+const DEFAULT_SHADOW: ShadowEffect = {
+  color: "#000000",
+  blur: 16,
+  offset_x: 0,
+  offset_y: 8,
+  opacity: 0.35,
+  glow: false,
+};
 
 interface InspectorProps {
   layer: MotionLayer | null;
@@ -76,6 +101,74 @@ function ColorField({ label, value, onChange }: { label: string; value: string; 
           onChange={(e) => onChange(e.target.value)}
           className="flex-1 bg-surface border border-border rounded px-2 py-1 text-sm min-w-0"
         />
+      </div>
+    </label>
+  );
+}
+
+/**
+ * Number field in seconds that treats 0 as "unset" (an empty input + the
+ * placeholder shown). Used for trim_end_ms where the model default is 0
+ * meaning "no end trim — play to the end of the clip" — rendering that as
+ * a literal "0.00s" would invite the user to think the clip is being
+ * truncated to zero. Empty input + placeholder makes the intent visible.
+ *
+ * The onChange receives the raw string the user typed, so the caller can
+ * distinguish "user cleared the field" (empty string) from "user typed 0"
+ * (which doesn't actually happen here — typing 0 would re-commit 0, but
+ * the user's mental model is "I cleared end-trim", so we accept that).
+ */
+function SecondsField({
+  label,
+  valueMs,
+  onChangeMs,
+  step = 0.1,
+  min = 0,
+  placeholder,
+  unitLabel,
+}: {
+  label: string;
+  valueMs: number;
+  onChangeMs: (ms: number) => void;
+  step?: number;
+  min?: number;
+  /** Placeholder when valueMs === 0 (or any other "unset" sentinel we add). */
+  placeholder?: string;
+  /** Unit suffix shown after the input. Defaults to "s" (seconds). */
+  unitLabel?: string;
+}) {
+  // 0 means "unset" — render an empty input. The user can still type a
+  // positive number to set the field; clearing the input reverts to 0.
+  const isUnset = valueMs === 0;
+  const displayValue = isUnset ? "" : (valueMs / 1000).toString();
+  return (
+    <label className="block">
+      <span className="text-xs text-text-muted block mb-1">{label}</span>
+      <div className="flex items-center gap-2">
+        <input
+          type="number"
+          value={displayValue}
+          step={step}
+          min={min}
+          placeholder={placeholder}
+          onChange={(e) => {
+            const raw = e.target.value;
+            if (raw === "") {
+              onChangeMs(0);
+              return;
+            }
+            const parsed = Number(raw);
+            if (Number.isNaN(parsed)) {
+              // Treat garbage as "user cleared it" — better than silently
+              // snapping to 0 and confusing them on the next render.
+              onChangeMs(0);
+              return;
+            }
+            onChangeMs(Math.max(0, Math.round(parsed * 1000)));
+          }}
+          className="flex-1 bg-surface border border-border rounded px-2 py-1 text-sm min-w-0"
+        />
+        <span className="text-[10px] text-text-faint shrink-0">{unitLabel ?? "s"}</span>
       </div>
     </label>
   );
@@ -158,6 +251,75 @@ export function Inspector({
         <p className="text-[10px] text-text-faint mt-1.5">
           Click the ◇ next to a field to keyframe it at the playhead's current time.
         </p>
+      </div>
+
+      {/* Gradient fill — applies on top of the shape's solid fill: when set,
+          the canvas / thumbnail renderers use the gradient instead. Image and
+          video layers ignore this (their "fill" is the raster itself). */}
+      {(layer.type === "rect" || layer.type === "ellipse" || layer.type === "text") && (
+        <div>
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs font-semibold uppercase tracking-wide text-text-faint">
+              Gradient fill
+            </span>
+            {layer.gradient ? (
+              <button
+                type="button"
+                onClick={() => onUpdateLayer({ gradient: null })}
+                className="text-[10px] text-text-faint hover:text-text"
+              >
+                Remove
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => onUpdateLayer({ gradient: DEFAULT_GRADIENT })}
+                className="text-[10px] text-accent hover:text-text"
+              >
+                + Add gradient
+              </button>
+            )}
+          </div>
+          {layer.gradient && (
+            <GradientPicker
+              value={layer.gradient}
+              onChange={(g) => onUpdateLayer({ gradient: g })}
+            />
+          )}
+        </div>
+      )}
+
+      {/* Drop shadow / glow — applies to every layer type. Wraps the shape
+          in an SVG <filter> at render time. */}
+      <div>
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-xs font-semibold uppercase tracking-wide text-text-faint">
+            Shadow & glow
+          </span>
+          {layer.shadow ? (
+            <button
+              type="button"
+              onClick={() => onUpdateLayer({ shadow: null })}
+              className="text-[10px] text-text-faint hover:text-text"
+            >
+              Remove
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => onUpdateLayer({ shadow: DEFAULT_SHADOW })}
+              className="text-[10px] text-accent hover:text-text"
+            >
+              + Add shadow
+            </button>
+          )}
+        </div>
+        {layer.shadow && (
+          <ShadowPicker
+            value={layer.shadow}
+            onChange={(s) => onUpdateLayer({ shadow: s })}
+          />
+        )}
       </div>
 
       {layer.type === "rect" && layer.rect && (
@@ -266,6 +428,29 @@ export function Inspector({
               value={layer.text.color}
               onChange={(v) => onUpdateLayer({ text: { ...layer.text!, color: v } })}
             />
+            <NumberField
+              label="Letter spacing (px)"
+              value={layer.text.letter_spacing ?? 0}
+              onChange={(v) => onUpdateLayer({ text: { ...layer.text!, letter_spacing: v } })}
+              step={0.5}
+            />
+            <NumberField
+              label="Line height (× font size)"
+              value={layer.text.line_height ?? 1.25}
+              onChange={(v) => onUpdateLayer({ text: { ...layer.text!, line_height: Math.max(0.1, v) } })}
+              step={0.05}
+            />
+            <ColorField
+              label="Stroke color"
+              value={layer.text.stroke_color ?? "#000000"}
+              onChange={(v) => onUpdateLayer({ text: { ...layer.text!, stroke_color: v } })}
+            />
+            <NumberField
+              label="Stroke width (px)"
+              value={layer.text.stroke_width ?? 0}
+              onChange={(v) => onUpdateLayer({ text: { ...layer.text!, stroke_width: Math.max(0, v) } })}
+              step={0.5}
+            />
           </div>
         </div>
       )}
@@ -292,6 +477,92 @@ export function Inspector({
                 value={layer.image.fit}
                 onChange={(e) =>
                   onUpdateLayer({ image: { ...layer.image!, fit: e.target.value as "contain" | "cover" | "fill" } })
+                }
+                className="w-full bg-surface border border-border rounded px-2 py-1 text-sm"
+              >
+                <option value="contain">Contain</option>
+                <option value="cover">Cover</option>
+                <option value="fill">Fill</option>
+              </select>
+            </label>
+          </div>
+        </div>
+      )}
+
+      {layer.type === "video" && layer.video && (
+        <div>
+          <span className="text-xs font-semibold uppercase tracking-wide text-text-faint block mb-2">
+            Video
+          </span>
+          <div className="space-y-2">
+            <label className="block">
+              <span className="text-xs text-text-muted block mb-1">Source URL</span>
+              <input
+                type="text"
+                value={layer.video.source_url}
+                onChange={(e) => onUpdateLayer({ video: { ...layer.video!, source_url: e.target.value } })}
+                placeholder="/motion/assets/…"
+                className="w-full bg-surface border border-border rounded px-2 py-1 text-sm"
+              />
+            </label>
+
+            <div className="grid grid-cols-2 gap-2">
+              <SecondsField
+                label="Trim start"
+                valueMs={layer.video.trim_start_ms}
+                onChangeMs={(trim_start_ms) => onUpdateLayer({ video: { ...layer.video!, trim_start_ms } })}
+              />
+              <SecondsField
+                label="Trim end"
+                valueMs={layer.video.trim_end_ms}
+                onChangeMs={(trim_end_ms) => onUpdateLayer({ video: { ...layer.video!, trim_end_ms } })}
+                placeholder="end of clip"
+              />
+            </div>
+
+            <NumberField
+              label="Playback rate"
+              value={layer.video.playback_rate}
+              step={0.1}
+              onChange={(v) => onUpdateLayer({ video: { ...layer.video!, playback_rate: Math.max(0.1, v) } })}
+            />
+
+            <div>
+              <span className="text-xs text-text-muted block mb-1">Volume</span>
+              <div className="flex items-center gap-2">
+                <input
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.05}
+                  value={layer.video.volume}
+                  onChange={(e) => onUpdateLayer({ video: { ...layer.video!, volume: Math.min(1, Math.max(0, Number(e.target.value))) } })}
+                  className="flex-1 accent-accent"
+                />
+                <span className="text-[10px] text-text-faint tabular-nums w-8 text-right">
+                  {Math.round(layer.video.volume * 100)}%
+                </span>
+              </div>
+            </div>
+
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={layer.video.muted}
+                onChange={(e) => onUpdateLayer({ video: { ...layer.video!, muted: e.target.checked } })}
+                className="accent-accent"
+              />
+              <span className="text-xs text-text-muted">Muted</span>
+            </label>
+
+            <label className="block">
+              <span className="text-xs text-text-muted block mb-1">Fit</span>
+              <select
+                value={layer.video.fit}
+                onChange={(e) =>
+                  onUpdateLayer({
+                    video: { ...layer.video!, fit: e.target.value as "contain" | "cover" | "fill" },
+                  })
                 }
                 className="w-full bg-surface border border-border rounded px-2 py-1 text-sm"
               >

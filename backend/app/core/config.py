@@ -32,6 +32,10 @@ class Paths:
     # Motion Studio projects: one JSON file per project — no database, same
     # convention as settings_file below.
     motion_projects: Path = PROJECT_ROOT / "motion_projects"
+    # Motion Studio uploaded media assets. These must be stable files rather
+    # than browser blob: URLs so saved projects and headless exports can load
+    # the same video/image sources later.
+    motion_assets: Path = PROJECT_ROOT / "motion_assets"
 
     # Where user-editable runtime settings (Settings page) are persisted.
     # A single JSON file — no database, per project requirements.
@@ -47,6 +51,7 @@ class Paths:
             cls.ffmpeg_dir,
             cls.logs,
             cls.motion_projects,
+            cls.motion_assets,
         ):
             path.mkdir(parents=True, exist_ok=True)
 

@@ -4,9 +4,18 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-LayerType = Literal["rect", "ellipse", "text", "image", "video"]
+LayerType = Literal["rect", "ellipse", "text", "image", "video", "polygon", "star", "triangle", "line", "arrow"]
 AnimatableProperty = Literal["x", "y", "width", "height", "rotation", "opacity"]
-EasingType = Literal["linear", "ease_in", "ease_out", "ease_in_out", "bounce", "elastic"]
+EasingType = Literal[
+    "linear",
+    "ease_in",
+    "ease_out",
+    "ease_in_out",
+    "bounce",
+    "elastic",
+    "spring",
+    "overshoot",
+]
 
 
 class Keyframe(BaseModel):
@@ -46,11 +55,60 @@ class TextLayerProps(BaseModel):
     font_weight: int = 600
     color: str = "#FFFFFF"
     align: Literal["left", "center", "right"] = "left"
+    # LT-TEXTSTYLE — letter spacing in px, line-height multiplier, text outline.
+    # Defaulted Optional so existing project JSON deserialises unchanged and
+    # factories don't have to spell them out per call site.
+    letter_spacing: float = 0.0
+    line_height: float = 1.25  # matches textWrap.ts LINE_HEIGHT_FACTOR
+    stroke_color: str = "#000000"
+    stroke_width: float = 0.0
 
 
 class ImageLayerProps(BaseModel):
     src: str
     fit: Literal["contain", "cover", "fill"] = "contain"
+
+
+class PolygonLayerProps(BaseModel):
+    fill: str = "#4F46E5"
+    stroke_color: str = "#000000"
+    stroke_width: float = 0.0
+    points: list[float] = Field(default_factory=list)
+
+
+class StarLayerProps(BaseModel):
+    fill: str = "#F59E0B"
+    stroke_color: str = "#000000"
+    stroke_width: float = 0.0
+    num_points: int = 5
+    inner_radius_ratio: float = 0.4
+
+
+class TriangleLayerProps(BaseModel):
+    fill: str = "#10B981"
+    stroke_color: str = "#000000"
+    stroke_width: float = 0.0
+    direction: Literal["up", "down", "left", "right"] = "up"
+
+
+class LineLayerProps(BaseModel):
+    stroke_color: str = "#FFFFFF"
+    stroke_width: float = 2.0
+    x1: float = 0.0
+    y1: float = 0.0
+    x2: float = 200.0
+    y2: float = 200.0
+
+
+class ArrowLayerProps(BaseModel):
+    stroke_color: str = "#FFFFFF"
+    stroke_width: float = 2.0
+    x1: float = 0.0
+    y1: float = 0.0
+    x2: float = 200.0
+    y2: float = 200.0
+    head_size: float = 12.0
+    head_angle: float = 30.0
 
 
 class VideoLayerProps(BaseModel):
@@ -73,6 +131,13 @@ class AudioKeyframe(BaseModel):
     easing: EasingType = "ease_in_out"
 
 
+class AudioMarker(BaseModel):
+    id: str
+    time_ms: int
+    label: str
+    color: str
+
+
 class AudioTrack(BaseModel):
     id: str
     name: str
@@ -86,6 +151,7 @@ class AudioTrack(BaseModel):
     fade_out_ms: int = 0
     muted: bool = False
     solo: bool = False
+    markers: list[AudioMarker] = Field(default_factory=list)
 
 
 class GradientStop(BaseModel):
@@ -120,14 +186,72 @@ class MotionLayer(BaseModel):
     text: TextLayerProps | None = None
     image: ImageLayerProps | None = None
     video: VideoLayerProps | None = None
+    polygon: PolygonLayerProps | None = None
+    star: StarLayerProps | None = None
+    triangle: TriangleLayerProps | None = None
+    line: LineLayerProps | None = None
+    arrow: ArrowLayerProps | None = None
     # Optional visual effects — mirror frontend types/motion.ts. When null
     # the renderer falls back to the shape's plain solid fill / no shadow.
+    # Defaulted (not required) so existing factories/layer constructors that
+    # don't pass these fields still validate — gradient/shadow are additive
+    # decoration most layers never use, so the burden shouldn't be on every
+    # call site to spell out `gradient=None, shadow=None`.
     gradient: GradientFill | None = None
     shadow: ShadowEffect | None = None
+
+    # Optional scene-time visibility window. A layer is rendered only during
+    # [visible_start_ms ?? 0, visible_end_ms ?? scene.duration_ms). None on
+    # either side = "use the scene default", so an unset pair matches today's
+    # "every layer is visible the whole scene" behaviour. Defaulted (not
+    # required) for the same reason gradient/shadow are: additive behaviour
+    # most layers don't use; forcing every factory call site to spell out
+    # `visible_start_ms=None, visible_end_ms=None` would be noise.
+    # NB: scene time, NOT source media time — VideoLayerProps.trim_start_ms/
+    # trim_end_ms cover the orthogonal "which part of the source footage
+    # plays" axis. v1: keyframes stay scene-absolute and do NOT move when a
+    # layer is retimed (keyframes outside the visible range simply stop
+    # having effect because the layer isn't drawn there).
+    visible_start_ms: int | None = None
+    visible_end_ms: int | None = None
+
     # Flat list across all animatable properties (not nested per-property
     # tracks) — simplest thing to serialize/mirror; filter by `.property`
     # when a renderer needs one property's own keyframes.
     keyframes: list[Keyframe] = Field(default_factory=list)
+
+
+ConnectorStyle = Literal["straight", "curved", "orthogonal", "bezier"]
+ConnectorEndAnchor = Literal["center", "top", "right", "bottom", "left"]
+
+
+class ConnectorEndpoint(BaseModel):
+    layer_id: str
+    anchor: ConnectorEndAnchor
+
+
+class MotionConnector(BaseModel):
+    """A connection between two layers that follows its endpoints when
+    either layer moves / is resized / animates. Endpoints are LAYER-ANCHORED
+    (not absolute points): the renderer resolves a concrete (x, y) for each
+    end at draw time from the source/target layer's current transform.
+
+    Field names are ``source`` / ``target`` deliberately — ``from`` is a
+    Python keyword and Pydantic aliasing would split the wire format
+    between disk-serialised and HTTP-serialised JSON in this codebase
+    (storage uses model_dump_json without by_alias; FastAPI defaults to
+    true). Using plain names with no alias avoids the split entirely.
+    """
+
+    id: str
+    name: str = "Connector"
+    source: ConnectorEndpoint
+    target: ConnectorEndpoint
+    style: ConnectorStyle = "curved"
+    stroke_color: str = "#888888"
+    stroke_width: float = 2.0
+    dash_pattern: str | None = None
+    animated: bool = False
 
 
 class MotionScene(BaseModel):
@@ -139,6 +263,12 @@ class MotionScene(BaseModel):
     background_color: str = "#0B0B0F"
     layers: list[MotionLayer] = Field(default_factory=list)
     audio_tracks: list[AudioTrack] = Field(default_factory=list)
+    # Optional connectors between layers. Flat list per scene — a connector
+    # is a relationship between two layers, so storing it on either side
+    # would create an asymmetry around which side owns deletion; a flat
+    # scene-level list mirrors how audio_tracks already work. Defaulted so
+    # existing project JSON deserialises unchanged.
+    connectors: list[MotionConnector] = Field(default_factory=list)
 
 
 class MotionProject(BaseModel):

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { MotionLayer } from "../../types/motion";
-import { buildWordReveal, type TextFxStyle } from "./textReveal";
+import { buildTextAnimation, type TextFxStyle } from "./textReveal";
 
 export interface TextFxPickerProps {
   /** Called with the freshly-built layers when the user clicks Insert. The
@@ -14,17 +14,37 @@ export interface TextFxPickerProps {
   anchorY?: number;
 }
 
+/** Style catalog: the dropdown's options, ordered roughly from cheapest /
+ *  most-common (word reveal) to most-costly (per-character / per-line).
+ *  See chat for skip rationale on blur and mask reveal — they're not in
+ *  this list because the engine genuinely can't animate text blur or
+ *  clip paths, and we don't fake them. */
 const STYLES: { id: TextFxStyle; label: string }[] = [
-  { id: "fade", label: "Fade" },
-  { id: "slide-up", label: "Slide up" },
+  { id: "fade", label: "Fade (word)" },
+  { id: "slide-up", label: "Slide up (word)" },
+  { id: "typewriter", label: "Typewriter" },
+  { id: "character-fade", label: "Character fade" },
+  { id: "character-slide", label: "Character slide" },
+  { id: "character-scale", label: "Character scale" },
+  { id: "line-fade", label: "Line fade" },
+  { id: "line-slide", label: "Line slide" },
+  { id: "line-rotate", label: "Line rotate" },
+  { id: "scale-up", label: "Scale up" },
+  { id: "scale-down", label: "Scale down" },
+  { id: "bounce", label: "Bounce" },
+  { id: "rotate-in", label: "Rotate in" },
+  { id: "split-text", label: "Split text" },
 ];
 
 /**
- * Presentational form for inserting a word-by-word text reveal into the scene.
+ * Presentational form for inserting a text animation into the scene.
  * Mirrors PresetPicker.tsx's outer chrome (border / bg-surface / uppercase
  * faint heading) but uses an inline form (text input + style dropdown + Insert
  * button) instead of a tile grid, because the user supplies the text rather
  * than picking from a fixed catalog.
+ *
+ * Dispatches through buildTextAnimation in textReveal.ts so the picker stays
+ * a thin UI shell and every style stays a single-line addition there.
  *
  * Pure props-driven — reads no editor state, mutates nothing itself; the
  * caller handles selection / pointer anchoring after Claude wires it up.
@@ -32,7 +52,7 @@ const STYLES: { id: TextFxStyle; label: string }[] = [
 export function TextFxPicker({
   onInsert,
   className = "",
-  title = "Text reveal",
+  title = "Text animation",
   anchorX = 200,
   anchorY = 200,
 }: TextFxPickerProps) {
@@ -40,9 +60,8 @@ export function TextFxPicker({
   const [style, setStyle] = useState<TextFxStyle>("fade");
 
   const handleInsert = () => {
-    const trimmed = text.trim();
-    if (trimmed.length === 0) return;
-    const layers = buildWordReveal(trimmed, anchorX, anchorY, { style });
+    if (text.trim().length === 0) return;
+    const layers = buildTextAnimation(text, anchorX, anchorY, style);
     if (layers.length > 0) onInsert(layers);
   };
 

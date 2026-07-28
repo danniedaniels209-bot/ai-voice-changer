@@ -12,10 +12,12 @@ import type {
   AudioTrack,
   AudioTrackKind,
   Keyframe,
+  MotionConnector,
   MotionLayer,
   MotionProject,
   MotionScene,
   Transform,
+  AudioMarker,
 } from "../types/motion";
 import { resolveTransformAtTime } from "./easing";
 
@@ -40,6 +42,7 @@ export type EditorAction =
   | { type: "SELECT_LAYERS"; ids: string[] }
   | { type: "ADD_LAYER"; layer: MotionLayer }
   | { type: "ADD_LAYERS"; layers: MotionLayer[] }
+  | { type: "DUPLICATE_LAYER"; layerId: string }
   | { type: "DELETE_SELECTED_LAYERS" }
   | { type: "UPDATE_TRANSFORM"; layerId: string; patch: Partial<Transform> }
   | { type: "UPDATE_LAYER"; layerId: string; patch: Partial<MotionLayer> }
@@ -53,7 +56,27 @@ export type EditorAction =
   | { type: "UPDATE_KEYFRAME"; layerId: string; keyframeId: string; patch: Partial<Keyframe> }
   | { type: "DELETE_KEYFRAME"; layerId: string; keyframeId: string }
   | { type: "APPLY_KEYFRAMES"; layerId: string; keyframes: Keyframe[] }
+  // Plural form of the above. Applying a scene transition animates every
+  // layer at once, and dispatching APPLY_KEYFRAMES per layer would push one
+  // undo snapshot each — so undoing "apply transition" would take as many
+  // Ctrl+Z presses as there are layers. Same reasoning as ADD_LAYERS and
+  // ALIGN_LAYERS: one user action, one undo step.
+  | { type: "APPLY_KEYFRAMES_BATCH"; updates: { layerId: string; keyframes: Keyframe[] }[] }
   | { type: "ALIGN_LAYERS"; updates: { layerId: string; transform: Transform }[] }
+  // LT-TIMELINE: per-layer scene-time visibility window. Retime = drag the
+  // bar body (shifts both ends by deltaMs, preserving length). Trim =
+  // drag a handle (sets start/end independently; passing null clears that
+  // end back to "use scene default"). Both snapshot for undo as one step.
+  | { type: "RETIME_LAYER"; layerId: string; deltaMs: number }
+  | { type: "TRIM_LAYER"; layerId: string; startMs?: number | null; endMs?: number | null }
+  // LT-CONNECTORS: connectors are a flat list per scene (mirrors
+  // audio_tracks). ADD/DELETE/UPDATE here; orphan cleanup (connectors
+  // whose source or target layer was deleted) runs in DELETE_SELECTED_
+  // LAYERS and DELETE_SCENE so a stale reference can never sit in the
+  // saved project file.
+  | { type: "ADD_CONNECTOR"; connector: MotionConnector }
+  | { type: "DELETE_CONNECTOR"; connectorId: string }
+  | { type: "UPDATE_CONNECTOR"; connectorId: string; patch: Partial<MotionConnector> }
   | { type: "ADD_SCENE" }
   | { type: "DUPLICATE_SCENE"; sceneId: string }
   | { type: "RENAME_SCENE"; sceneId: string; name: string }
@@ -65,6 +88,9 @@ export type EditorAction =
   | { type: "TOGGLE_AUDIO_SOLO"; trackId: string }
   | { type: "SET_AUDIO_VOLUME"; trackId: string; volume: number }
   | { type: "DELETE_AUDIO_TRACK"; trackId: string }
+  | { type: "ADD_AUDIO_MARKER"; trackId: string; timeMs: number }
+  | { type: "UPDATE_AUDIO_MARKER"; trackId: string; markerId: string; patch: Partial<AudioMarker> }
+  | { type: "DELETE_AUDIO_MARKER"; trackId: string; markerId: string }
   | { type: "UNDO" }
   | { type: "REDO" };
 
@@ -108,6 +134,21 @@ function withAudioTrack(
   };
 }
 
+/** Drop connectors whose source OR target layer_id is in the given set.
+ *  Used wherever layers can disappear (currently DELETE_SELECTED_LAYERS —
+ *  DELETE_SCENE wipes the whole scene so its connectors leave with it).
+ *  An orphaned connector pointing at a dead layer id is exactly the kind
+ *  of thing that renders fine until someone opens that project a week
+ *  later, so we pre-emptively drop at every deletion path. */
+function dropOrphanConnectors(
+  scene: MotionScene,
+  deletedLayerIds: Set<string>,
+): MotionConnector[] {
+  return (scene.connectors ?? []).filter(
+    (c) => !deletedLayerIds.has(c.source.layer_id) && !deletedLayerIds.has(c.target.layer_id),
+  );
+}
+
 function newScene(name: string, like?: MotionScene): MotionScene {
   return {
     id: newId(),
@@ -118,23 +159,53 @@ function newScene(name: string, like?: MotionScene): MotionScene {
     background_color: like?.background_color ?? "#0B0B0F",
     layers: [],
     audio_tracks: [],
+    connectors: [],
   };
 }
 
 /** Deep-clones a scene with fresh ids throughout (scene, every layer,
- * every keyframe, every audio track) — reusing ids across scenes would
- * make e.g. "layer 3 in scene A" and "layer 3 in scene B" collide the
- * moment any code ever looks a layer up by id alone. */
+ *  every keyframe, every audio track, every connector) — reusing ids
+ *  across scenes would make e.g. "layer 3 in scene A" and "layer 3 in
+ *  scene B" collide the moment any code ever looks a layer up by id
+ *  alone. A connector referencing a source/target layer gets its
+ *  endpoint layer_id rewritten to the CLONED layer's new id, so the
+ *  duplicated scene's connectors still point at the duplicated layers
+ *  (not at the original scene's — that would silently link two scenes). */
 function cloneScene(scene: MotionScene, name: string): MotionScene {
+  // Map original layer id -> cloned layer id, so connectors can be
+  // rewritten. If a connector referenced a layer not in this scene
+  // (shouldn't happen, but a stale project could), drop it rather
+  // than ship a broken reference.
+  const layerIdMap = new Map<string, string>();
+  const clonedLayers = scene.layers.map((l) => {
+    const newLayerId = newId();
+    layerIdMap.set(l.id, newLayerId);
+    return {
+      ...l,
+      id: newLayerId,
+      keyframes: l.keyframes.map((k) => ({ ...k, id: newId() })),
+    };
+  });
+  const clonedConnectors = (scene.connectors ?? [])
+    .map((c): MotionConnector | null => {
+      const sourceLayerId = layerIdMap.get(c.source.layer_id);
+      const targetLayerId = layerIdMap.get(c.target.layer_id);
+      if (!sourceLayerId || !targetLayerId) return null;
+      return {
+        ...c,
+        id: newId(),
+        source: { ...c.source, layer_id: sourceLayerId },
+        target: { ...c.target, layer_id: targetLayerId },
+      };
+    })
+    .filter((c): c is MotionConnector => c !== null);
+
   return {
     ...scene,
     id: newId(),
     name,
-    layers: scene.layers.map((l) => ({
-      ...l,
-      id: newId(),
-      keyframes: l.keyframes.map((k) => ({ ...k, id: newId() })),
-    })),
+    layers: clonedLayers,
+    connectors: clonedConnectors,
     audio_tracks: scene.audio_tracks.map((t) => ({
       ...t,
       id: newId(),
@@ -230,12 +301,41 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
       };
     }
 
+    case "DUPLICATE_LAYER": {
+      const scene = activeScene(state.project, state.activeSceneId);
+      const sourceIndex = scene.layers.findIndex((l) => l.id === action.layerId);
+      if (sourceIndex === -1) return state;
+      const source = scene.layers[sourceIndex];
+      // Deep-clone with fresh ids — reusing keyframe ids across layers
+      // would make the timeline address the wrong keyframe on undo/redo.
+      const copy: MotionLayer = {
+        ...source,
+        id: newId(),
+        name: `${source.name} copy`,
+        keyframes: source.keyframes.map((k) => ({ ...k, id: newId() })),
+        // Offset the copy slightly so it's visibly not the original
+        transform: {
+          ...source.transform,
+          x: source.transform.x + 16,
+          y: source.transform.y + 16,
+        },
+      };
+      const layers = [...scene.layers];
+      layers.splice(sourceIndex + 1, 0, copy);
+      const project = withScene(state.project, state.activeSceneId, (s) => ({ ...s, layers }));
+      return { ...state, ...snapshot(state), project, selectedLayerIds: [copy.id], dirty: true };
+    }
+
     case "DELETE_SELECTED_LAYERS": {
       if (state.selectedLayerIds.length === 0) return state;
       const toDelete = new Set(state.selectedLayerIds);
       const project = withScene(state.project, state.activeSceneId, (scene) => ({
         ...scene,
         layers: scene.layers.filter((l) => !toDelete.has(l.id)),
+        // Also drop connectors whose source or target just disappeared —
+        // an orphaned connector pointing at a dead layer id would render
+        // fine now and silently break when the project is reopened.
+        connectors: dropOrphanConnectors(scene, toDelete),
       }));
       return { ...state, ...snapshot(state), project, selectedLayerIds: [], dirty: true };
     }
@@ -364,6 +464,28 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
       return { ...state, ...snapshot(state), project, dirty: true };
     }
 
+    case "APPLY_KEYFRAMES_BATCH": {
+      if (action.updates.length === 0) return state;
+      // Fold every layer's update into ONE project revision so the whole
+      // batch is a single undo step. Per-update semantics are identical to
+      // APPLY_KEYFRAMES: replace keyframes on the properties this update
+      // animates, leave every other property's track alone.
+      let batched = state.project;
+      for (const update of action.updates) {
+        const touched = new Set(update.keyframes.map((k) => k.property));
+        batched = withScene(batched, state.activeSceneId, (scene) =>
+          withLayer(scene, update.layerId, (layer) => ({
+            ...layer,
+            keyframes: [
+              ...layer.keyframes.filter((k) => !touched.has(k.property)),
+              ...update.keyframes,
+            ],
+          })),
+        );
+      }
+      return { ...state, ...snapshot(state), project: batched, dirty: true };
+    }
+
     case "ALIGN_LAYERS": {
       // One snapshot for the whole align/distribute operation — clicking
       // "align left" on 5 layers is one undo step, not five.
@@ -372,6 +494,64 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
       const project = withScene(state.project, state.activeSceneId, (scene) => ({
         ...scene,
         layers: scene.layers.map((l) => (byId.has(l.id) ? { ...l, transform: byId.get(l.id)! } : l)),
+      }));
+      return { ...state, ...snapshot(state), project, dirty: true };
+    }
+
+    case "RETIME_LAYER": {
+      // Drag the bar body: shift both ends by the same delta, preserving
+      // length. A layer with null visible_start_ms / visible_end_ms is
+      // "use scene defaults" — when the user first drags it, expand those
+      // defaults into concrete ints (start = 0, end = scene.duration_ms)
+      // then apply the delta, so the gesture has something to move.
+      const scene = activeScene(state.project, state.activeSceneId);
+      const project = withScene(state.project, state.activeSceneId, (sc) =>
+        withLayer(sc, action.layerId, (layer) => {
+          const newStart = (layer.visible_start_ms ?? 0) + action.deltaMs;
+          const newEnd = (layer.visible_end_ms ?? scene.duration_ms) + action.deltaMs;
+          return { ...layer, visible_start_ms: newStart, visible_end_ms: newEnd };
+        }),
+      );
+      return { ...state, ...snapshot(state), project, dirty: true };
+    }
+
+    case "TRIM_LAYER": {
+      // Drag a handle: set start and/or end explicitly. startMs/endMs may
+      // be null (sentinel to clear back to "use scene default") or a real
+      // int. `undefined` means "this end wasn't touched, leave as-is".
+      const project = withScene(state.project, state.activeSceneId, (scene) =>
+        withLayer(scene, action.layerId, (layer) => {
+          const next: MotionLayer = { ...layer };
+          if (action.startMs !== undefined) next.visible_start_ms = action.startMs;
+          if (action.endMs !== undefined) next.visible_end_ms = action.endMs;
+          return next;
+        }),
+      );
+      return { ...state, ...snapshot(state), project, dirty: true };
+    }
+
+    case "ADD_CONNECTOR": {
+      const project = withScene(state.project, state.activeSceneId, (scene) => ({
+        ...scene,
+        connectors: [...(scene.connectors ?? []), action.connector],
+      }));
+      return { ...state, ...snapshot(state), project, dirty: true };
+    }
+
+    case "DELETE_CONNECTOR": {
+      const project = withScene(state.project, state.activeSceneId, (scene) => ({
+        ...scene,
+        connectors: (scene.connectors ?? []).filter((c) => c.id !== action.connectorId),
+      }));
+      return { ...state, ...snapshot(state), project, dirty: true };
+    }
+
+    case "UPDATE_CONNECTOR": {
+      const project = withScene(state.project, state.activeSceneId, (scene) => ({
+        ...scene,
+        connectors: (scene.connectors ?? []).map((c) =>
+          c.id === action.connectorId ? { ...c, ...action.patch } : c,
+        ),
       }));
       return { ...state, ...snapshot(state), project, dirty: true };
     }
@@ -490,6 +670,39 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
         ...scene,
         audio_tracks: scene.audio_tracks.filter((t) => t.id !== action.trackId),
       }));
+      return { ...state, ...snapshot(state), project, dirty: true };
+    }
+
+    case "ADD_AUDIO_MARKER": {
+      const project = withScene(state.project, state.activeSceneId, (scene) =>
+        withAudioTrack(scene, action.trackId, (track) => ({
+          ...track,
+          markers: [
+            ...(track.markers || []),
+            { id: newId(), time_ms: action.timeMs, label: "Marker", color: "#FBBF24" },
+          ],
+        })),
+      );
+      return { ...state, ...snapshot(state), project, dirty: true };
+    }
+
+    case "UPDATE_AUDIO_MARKER": {
+      const project = withScene(state.project, state.activeSceneId, (scene) =>
+        withAudioTrack(scene, action.trackId, (track) => ({
+          ...track,
+          markers: (track.markers || []).map((m) => (m.id === action.markerId ? { ...m, ...action.patch } : m)),
+        })),
+      );
+      return { ...state, ...snapshot(state), project, dirty: true };
+    }
+
+    case "DELETE_AUDIO_MARKER": {
+      const project = withScene(state.project, state.activeSceneId, (scene) =>
+        withAudioTrack(scene, action.trackId, (track) => ({
+          ...track,
+          markers: (track.markers || []).filter((m) => m.id !== action.markerId),
+        })),
+      );
       return { ...state, ...snapshot(state), project, dirty: true };
     }
 

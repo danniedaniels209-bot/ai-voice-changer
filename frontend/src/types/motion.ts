@@ -9,10 +9,19 @@
 
 import type { GradientFill } from "../motion/gradients/gradientTypes";
 import type { ShadowEffect } from "../motion/shadowfx/shadowTypes";
+import type { ConnectorStyle } from "../motion/connector/ConnectorTypes";
 
-export type LayerType = "rect" | "ellipse" | "text" | "image" | "video";
+export type LayerType = "rect" | "ellipse" | "text" | "image" | "video" | "polygon" | "star" | "triangle" | "line" | "arrow";
 export type AnimatableProperty = "x" | "y" | "width" | "height" | "rotation" | "opacity";
-export type EasingType = "linear" | "ease_in" | "ease_out" | "ease_in_out" | "bounce" | "elastic";
+export type EasingType =
+  | "linear"
+  | "ease_in"
+  | "ease_out"
+  | "ease_in_out"
+  | "bounce"
+  | "elastic"
+  | "spring"
+  | "overshoot";
 
 export interface Keyframe {
   id: string;
@@ -51,11 +60,88 @@ export interface TextLayerProps {
   font_weight: number;
   color: string;
   align: "left" | "center" | "right";
+  /** Extra tracking in px (positive = looser, negative = tighter). 0 = the
+   *  browser's default for the given font. Maps directly to SVG's
+   *  `letter-spacing` attribute (which itself consumes a px length). */
+  letter_spacing?: number;
+  /** Multiplier on font_size for the per-line vertical advance. Default 1.25
+   *  matches textWrap.ts's LINE_HEIGHT_FACTOR so wrap and render stay in
+   *  lockstep — if you change one, change the other. */
+  line_height?: number;
+  /** Outline color. Pair with stroke_width > 0 to draw a stroke around each
+   *  glyph. SVG <text> only renders a stroke when both are set; with the
+   *  default stroke_width of 0, no stroke is drawn. */
+  stroke_color?: string;
+  /** Outline thickness in px. 0 = no stroke (default). */
+  stroke_width?: number;
 }
 
 export interface ImageLayerProps {
   src: string;
   fit: "contain" | "cover" | "fill";
+}
+
+export interface PolygonLayerProps {
+  fill: string;
+  stroke_color: string;
+  stroke_width: number;
+  /** Flat array of [x1, y1, x2, y2, ...] in layer-local coords (offsets
+   *  from the layer's x,y origin). Default: regular pentagon inscribed in
+   *  the bounding box, computed at factory time. */
+  points: number[];
+}
+
+export interface StarLayerProps {
+  fill: string;
+  stroke_color: string;
+  stroke_width: number;
+  /** Number of points (outer vertices). 3 = triangle, 4 = diamond/square,
+   *  5 = classic star, etc. */
+  num_points: number;
+  /** Distance of inner vertices from center as a fraction of the outer
+   *  radius (0–1). 0.4 produces a standard 5-pointed star; 1.0 produces
+   *  a regular polygon with 2×num_points sides. */
+  inner_radius_ratio: number;
+}
+
+/** Separate from StarLayerProps even though star with num_points=3 produces
+ *  a triangle shape — this type's `direction` property lets it point left or
+ *  right (a play-glyph triangle), which a star can't express. Both types are
+ *  kept because the direction parameter is a real differentiator that nobody
+ *  should "simplify" away later. */
+export interface TriangleLayerProps {
+  fill: string;
+  stroke_color: string;
+  stroke_width: number;
+  direction: "up" | "down" | "left" | "right";
+}
+
+/** Open path with no fill. Layer-local endpoints so the existing transform
+ *  (move/rotate/scale) still works on the line as a group. Default at
+ *  factory time: x1=0, y1=0, x2=width, y2=height, spanning the bounding
+ *  box corner-to-corner. */
+export interface LineLayerProps {
+  stroke_color: string;
+  stroke_width: number;
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+}
+
+/** Like LineLayerProps but with a filled arrowhead at the (x2,y2) end. */
+export interface ArrowLayerProps {
+  stroke_color: string;
+  stroke_width: number;
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  /** Length of the arrowhead along the shaft direction (px). */
+  head_size: number;
+  /** Half-angle of the arrowhead opening (degrees). Default 30 = 60°
+   *  total spread. */
+  head_angle: number;
 }
 
 export interface VideoLayerProps {
@@ -84,6 +170,13 @@ export interface AudioKeyframe {
   easing: EasingType;
 }
 
+export interface AudioMarker {
+  id: string;
+  time_ms: number;
+  label: string;
+  color: string;
+}
+
 export interface AudioTrack {
   id: string;
   name: string;
@@ -97,6 +190,8 @@ export interface AudioTrack {
   fade_out_ms: number;
   muted: boolean;
   solo: boolean;
+  /** Optional markers on the audio track for syncing animation to speech/beats. */
+  markers?: AudioMarker[];
 }
 
 export interface MotionLayer {
@@ -111,6 +206,12 @@ export interface MotionLayer {
   text: TextLayerProps | null;
   image: ImageLayerProps | null;
   video: VideoLayerProps | null;
+  polygon?: PolygonLayerProps | null;
+  star?: StarLayerProps | null;
+  triangle?: TriangleLayerProps | null;
+  line?: LineLayerProps | null;
+  arrow?: ArrowLayerProps | null;
+
   /** Optional gradient fill — when set, the renderers use a <linearGradient>/
    *  <radialGradient> in place of the rect/ellipse/text fill color. Absent or
    *  null = plain solid fill from rect.fill / ellipse.fill / text.color.
@@ -126,7 +227,64 @@ export interface MotionLayer {
    *  the shape in an SVG <filter><feDropShadow>. glow=true means centered
    *  glow (offset 0,0); glow=false means offset drop shadow. */
   shadow?: ShadowEffect | null;
+
+  /** Optional scene-time visibility window. A layer is rendered only during
+   *  [visible_start_ms ?? 0, visible_end_ms ?? scene.duration_ms). null on
+   *  either side = "use the scene default", so an unset pair matches
+   *  today's "every layer is visible the whole scene" behaviour and no
+   *  existing project visually changes.
+   *
+   *  These are in SCENE time (when the layer appears on the timeline), not
+   *  SOURCE time — VideoLayerProps.trim_start_ms/trim_end_ms already cover
+   *  "which part of the source footage plays", and the two are orthogonal.
+   *  Renderers/evaluators gate the layer at the top via isLayerVisibleAt().
+   *
+   *  Optional (`?`) for the same reason gradient/shadow are: additive
+   *  behaviour most layers don't use, and forcing every factory call site
+   *  to spell out `visible_start_ms: null, visible_end_ms: null` would be
+   *  noise. v1: keyframes stay scene-absolute and do NOT move when a layer
+   *  is retimed (keyframes outside the visible range simply stop having
+   *  effect because the layer isn't drawn there). v2 "drag layer + its
+   *  keyframes together" is a flagged refinement, not built today. */
+  visible_start_ms?: number | null;
+  visible_end_ms?: number | null;
   keyframes: Keyframe[];
+}
+
+/** Which point of a layer's axis-aligned bounding box a connector attaches
+ *  to. v1 only creates connectors with "center" on both ends (no side-picker
+ *  UI yet), but the model carries the full enum so adding a side picker
+ *  later doesn't change the wire format — a rename of a serialised field
+ *  would be a real break, an unused enum value costs nothing. */
+export type ConnectorEndAnchor = "center" | "top" | "right" | "bottom" | "left";
+
+export interface ConnectorEndpoint {
+  layer_id: string;
+  anchor: ConnectorEndAnchor;
+}
+
+/** A connection between two layers that follows its endpoints when either
+ *  layer moves / is resized / animates. Endpoints are LAYER-ANCHORED (not
+ *  absolute points): the renderer resolves a concrete {x,y} for each end at
+ *  draw time from the source/target layer's current transform — see
+ *  resolveConnectorEndpoints in motion/connectorGeometry.ts. That keeps
+ *  move/resize/animation following for free, with no sync plumbing.
+ *
+ *  Field names are `source` / `target`, not `from` / `to`, because `from`
+ *  is a Python keyword and Pydantic aliasing would split the wire format
+ *  between disk-serialised and HTTP-serialised JSON in this codebase
+ *  (storage uses model_dump_json without by_alias; FastAPI defaults to true).
+ *  Using plain names with no alias avoids the split entirely. */
+export interface MotionConnector {
+  id: string;
+  name: string;
+  source: ConnectorEndpoint;
+  target: ConnectorEndpoint;
+  style: ConnectorStyle;
+  stroke_color: string;
+  stroke_width: number;
+  dash_pattern: string | null;
+  animated: boolean;
 }
 
 export interface MotionScene {
@@ -138,6 +296,15 @@ export interface MotionScene {
   background_color: string;
   layers: MotionLayer[];
   audio_tracks: AudioTrack[];
+  /** Optional connectors between layers. Flat list per scene — a connector
+   *  is a relationship between two layers, so storing it on either side
+   *  would create an asymmetry around which side owns deletion; a flat
+   *  scene-level list mirrors how audio_tracks already work.
+   *
+   *  Optional (`?`) and defaulted on the backend so existing project JSON
+   *  deserialises unchanged and no layer-factory call site has to spell
+   *  out `connectors: []`. */
+  connectors?: MotionConnector[];
 }
 
 export interface MotionProject {
@@ -146,4 +313,24 @@ export interface MotionProject {
   scenes: MotionScene[];
   created_at: string;
   updated_at: string;
+}
+
+/** Whether `layer` is on screen at `timeMs` (scene time). A layer with no
+ *  visible_start_ms / visible_end_ms set is visible for the entire scene
+ *  — the historical behaviour, so all existing projects keep their
+ *  current appearance. visible_end_ms beyond sceneDurationMs is allowed
+ *  (a dragged handle can run off the right edge); we clamp it here. A
+ *  negative visible_start_ms is also allowed (preset keyframes already
+ *  start negative to animate "in" by time 0).
+ *
+ *  Pure, no React/editor dependency — renderers (MotionCanvas, RenderFrame,
+ *  SceneThumbnail) and the timeline both call it. */
+export function isLayerVisibleAt(
+  layer: MotionLayer,
+  sceneDurationMs: number,
+  timeMs: number,
+): boolean {
+  const start = layer.visible_start_ms ?? 0;
+  const end = layer.visible_end_ms ?? sceneDurationMs;
+  return timeMs >= start && timeMs < end;
 }

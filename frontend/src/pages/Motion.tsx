@@ -119,9 +119,21 @@ export function Motion() {
       {projects === null ? (
         <p className="text-text-muted text-sm">Loading…</p>
       ) : projects.length === 0 ? (
-        <div className="border border-dashed border-border rounded-lg p-12 text-center text-text-muted">
-          <Clapperboard size={32} className="mx-auto mb-3 opacity-60" />
-          <p className="text-sm">No projects yet. Create one to open the editor.</p>
+        <div className="border border-dashed border-border rounded-lg p-16 flex flex-col items-center justify-center text-center text-text-muted bg-surface-hover/20">
+          <Clapperboard size={40} className="mb-4 text-accent/50" />
+          <h3 className="text-base font-semibold text-text mb-1.5">No projects yet</h3>
+          <p className="text-sm text-text-muted max-w-sm mb-6">
+            Start building your animated video from a blank canvas, or kickstart your project with a pre-built template.
+          </p>
+          <button
+            type="button"
+            onClick={() => setPickerOpen(true)}
+            disabled={creating}
+            className="flex items-center gap-2 bg-accent text-white rounded-md px-5 py-2.5 text-sm font-medium hover:opacity-90 shadow-sm transition-opacity disabled:opacity-50"
+          >
+            <Plus size={16} />
+            Create First Project
+          </button>
         </div>
       ) : (
         <>

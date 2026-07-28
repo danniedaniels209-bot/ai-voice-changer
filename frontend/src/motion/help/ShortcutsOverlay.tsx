@@ -19,6 +19,11 @@ const SHORTCUTS: ShortcutItem[] = [
   { keys: ["Space"], description: "Play or pause" },
   { keys: ["Left"], description: "Previous frame" },
   { keys: ["Right"], description: "Next frame" },
+  { keys: ["Shift", "Left"], description: "Back one second" },
+  { keys: ["Shift", "Right"], description: "Forward one second" },
+  { keys: ["Home"], description: "Jump to start" },
+  { keys: ["End"], description: "Jump to end" },
+  { keys: ["?"], description: "Show this help" },
 ];
 
 function ShortcutKeys({ keys }: { keys: string[] }) {

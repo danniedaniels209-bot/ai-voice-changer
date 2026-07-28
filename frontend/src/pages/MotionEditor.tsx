@@ -12,10 +12,12 @@ import {
   Loader2,
   Film,
   Shapes,
+  Wand2,
+  Spline,
   HelpCircle,
 } from "lucide-react";
-import { getMotionProject, saveMotionProject } from "../api/motion";
-import { editorReducer, getResolvedTransform, type EditorState } from "../motion/state";
+import { getMotionProject, saveMotionProject, uploadMotionAsset } from "../api/motion";
+import { editorReducer, getResolvedTransform, newId, type EditorState } from "../motion/state";
 import { createLayer } from "../motion/layerFactory";
 import { usePlaybackClock } from "../motion/usePlaybackClock";
 import { applyPreset, type PresetId } from "../motion/presets/motionPresets";
@@ -32,6 +34,8 @@ import { ALIGN_OPERATIONS, type AlignKind } from "../motion/align/alignment";
 import { CommandPalette, type CommandItem } from "../motion/palette/CommandPalette";
 import { ShortcutsOverlay } from "../motion/help/ShortcutsOverlay";
 import { HistoryPanel } from "../motion/history/HistoryPanel";
+import { TransitionModal } from "../motion/transitions/TransitionModal";
+import { applyTransitionToScene } from "../motion/transitions/applyTransitionToScene";
 import type { AnimatableProperty, LayerType, MotionLayer, Transform } from "../types/motion";
 
 const INITIAL_STATE: EditorState = {
@@ -46,6 +50,10 @@ const INITIAL_STATE: EditorState = {
 
 const AUTOSAVE_DELAY_MS = 1200;
 
+/** One frame at 30fps. Arrow-key stepping uses this; Shift+arrow jumps a
+ *  full second for coarse seeking. */
+const FRAME_STEP_MS = 1000 / 30;
+
 export function MotionEditor() {
   const { projectId } = useParams<{ projectId: string }>();
   const navigate = useNavigate();
@@ -57,8 +65,25 @@ export function MotionEditor() {
   const [insertOpen, setInsertOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [transitionOpen, setTransitionOpen] = useState(false);
+  // Connect mode: click one layer, then a second, to join them. Held here
+  // (not in MotionCanvas) because the toolbar button and the canvas both
+  // need it, and it isn't project data — nothing to save or undo.
+  const [connectMode, setConnectMode] = useState(false);
+  const [connectFrom, setConnectFrom] = useState<string | null>(null);
+  const [videoImporting, setVideoImporting] = useState(false);
   const autosaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const videoInputRef = useRef<HTMLInputElement | null>(null);
+  // The keydown effect below binds once (empty deps) so it doesn't rebind on
+  // every playhead tick, which means it can't close over live values. This
+  // ref is refreshed each render and read inside the handler instead.
+  // Same stale-closure problem as playbackRef: the keydown effect binds once.
+  const selectionRef = useRef<string[]>([]);
+  const playbackRef = useRef<{ toggle: () => void; playheadMs: number; durationMs: number }>({
+    toggle: () => {},
+    playheadMs: 0,
+    durationMs: 5000,
+  });
 
   useEffect(() => {
     if (!projectId) return;
@@ -87,8 +112,12 @@ export function MotionEditor() {
     };
   }, [state.dirty, state.project]);
 
-  // Keyboard shortcuts: undo/redo and delete, ignored while typing in a
-  // text field/input so they don't fight with normal editing.
+  // Keyboard shortcuts, ignored while typing in a text field/input so they
+  // don't fight with normal editing.
+  //
+  // Space / arrow transport keys are listed in ShortcutsOverlay, so they have
+  // to actually work — a help screen promising shortcuts the app doesn't
+  // implement is worse than no help screen.
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
       const target = e.target as HTMLElement;
@@ -105,9 +134,34 @@ export function MotionEditor() {
       } else if (mod && (e.key.toLowerCase() === "y" || (e.key.toLowerCase() === "z" && e.shiftKey))) {
         e.preventDefault();
         dispatch({ type: "REDO" });
+      } else if (mod && e.key.toLowerCase() === "d") {
+        // Ctrl/Cmd+D duplicates the selection. Browsers bind this to
+        // "bookmark this page", so preventDefault is mandatory.
+        e.preventDefault();
+        const id = selectionRef.current[0];
+        if (id) dispatch({ type: "DUPLICATE_LAYER", layerId: id });
       } else if (e.key === "Delete" || e.key === "Backspace") {
         e.preventDefault();
         dispatch({ type: "DELETE_SELECTED_LAYERS" });
+      } else if (e.key === " " || e.code === "Space") {
+        // Space is the near-universal transport toggle in video tools. It
+        // also scrolls the page by default, hence preventDefault.
+        e.preventDefault();
+        playbackRef.current.toggle();
+      } else if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+        // Frame stepping. Shift jumps a second at a time for coarse seeking.
+        e.preventDefault();
+        const step = e.shiftKey ? 1000 : FRAME_STEP_MS;
+        const delta = e.key === "ArrowLeft" ? -step : step;
+        const { playheadMs, durationMs } = playbackRef.current;
+        const next = Math.min(durationMs, Math.max(0, playheadMs + delta));
+        dispatch({ type: "SET_PLAYHEAD", timeMs: Math.round(next) });
+      } else if (e.key === "Home" || e.key === "End") {
+        e.preventDefault();
+        dispatch({
+          type: "SET_PLAYHEAD",
+          timeMs: e.key === "Home" ? 0 : playbackRef.current.durationMs,
+        });
       } else if (e.key === "?") {
         e.preventDefault();
         setShortcutsOpen(true);
@@ -126,6 +180,12 @@ export function MotionEditor() {
   const playback = usePlaybackClock(scene?.duration_ms ?? 5000, state.playheadMs, (ms) =>
     dispatch({ type: "SET_PLAYHEAD", timeMs: ms }),
   );
+  selectionRef.current = state.selectedLayerIds;
+  playbackRef.current = {
+    toggle: playback.toggle,
+    playheadMs: state.playheadMs,
+    durationMs: scene?.duration_ms ?? 5000,
+  };
 
   if (loadError) {
     return (
@@ -157,6 +217,49 @@ export function MotionEditor() {
     dispatch({ type: "APPLY_KEYFRAMES", layerId: selectedLayer.id, keyframes });
   }
 
+  function handleApplyTransition(transitionId: string) {
+    // One transition = one undo step, hence the batched action rather than a
+    // dispatch per layer (applyTransitionToScene returns a payload per
+    // eligible layer, skipping hidden/locked ones).
+    const updates = applyTransitionToScene(activeScene, transitionId, 600);
+    if (updates.length === 0) return;
+    dispatch({ type: "APPLY_KEYFRAMES_BATCH", updates });
+  }
+
+  /** Click-two-layers gesture. First click arms the source, second click
+   *  creates the connector. Clicking the same layer twice cancels rather
+   *  than making a self-connector, which would render as a dot. */
+  function handleConnectPick(layerId: string) {
+    if (connectFrom === null) {
+      setConnectFrom(layerId);
+      return;
+    }
+    if (connectFrom === layerId) {
+      setConnectFrom(null);
+      return;
+    }
+    dispatch({
+      type: "ADD_CONNECTOR",
+      connector: {
+        id: newId(),
+        name: "Connector",
+        // v1 anchors both ends at "center" — the model carries the full
+        // side enum but there's no side-picker UI yet (see OPENCODE's
+        // LT-CONNECTORS proposal).
+        source: { layer_id: connectFrom, anchor: "center" },
+        target: { layer_id: layerId, anchor: "center" },
+        style: "curved",
+        stroke_color: "#8B8B99",
+        stroke_width: 2,
+        dash_pattern: null,
+        animated: false,
+      },
+    });
+    // Stay in connect mode with the target armed, so chaining A->B->C is
+    // three clicks rather than six.
+    setConnectFrom(layerId);
+  }
+
   function handleInsertLayers(layers: MotionLayer[]) {
     dispatch({ type: "ADD_LAYERS", layers });
   }
@@ -169,13 +272,16 @@ export function MotionEditor() {
     dispatch({ type: "ALIGN_LAYERS", updates });
   }
 
-  function handleImportVideo(file: File) {
-    // No upload/storage backend for imported media yet — an object URL is
-    // only valid for this browser tab's lifetime, so the video won't
-    // survive a reload. Good enough to preview and arrange in the editor;
-    // real asset persistence is a separate piece of work.
-    const url = URL.createObjectURL(file);
-    dispatch({ type: "ADD_LAYER", layer: createLayer("video", { src: url }) });
+  async function handleImportVideo(file: File) {
+    setVideoImporting(true);
+    try {
+      const uploaded = await uploadMotionAsset(file);
+      dispatch({ type: "ADD_LAYER", layer: createLayer("video", { src: uploaded.source_url }) });
+    } catch (err) {
+      setLoadError(String(err));
+    } finally {
+      setVideoImporting(false);
+    }
   }
 
   const commands: CommandItem[] = [
@@ -185,6 +291,16 @@ export function MotionEditor() {
     { id: "add-image", label: "Add Image", icon: "🖼", onRun: () => addLayer("image") },
     { id: "import-video", label: "Import Video…", icon: "🎬", onRun: () => videoInputRef.current?.click() },
     { id: "open-insert", label: "Open Insert Library…", icon: "✦", onRun: () => setInsertOpen(true) },
+    { id: "animate-scene", label: "Animate scene in…", icon: "🪄", onRun: () => setTransitionOpen(true) },
+    {
+      id: "connect-layers",
+      label: "Connect layers",
+      icon: "⤳",
+      onRun: () => {
+        setConnectMode(true);
+        setConnectFrom(null);
+      },
+    },
     { id: "add-scene", label: "Add Scene", icon: "+", onRun: () => dispatch({ type: "ADD_SCENE" }) },
     { id: "export", label: "Export…", icon: "⬇", onRun: () => setExportOpen(true) },
     { id: "undo", label: "Undo", icon: "↶", onRun: () => dispatch({ type: "UNDO" }) },
@@ -276,9 +392,10 @@ export function MotionEditor() {
           type="button"
           title="Import video"
           onClick={() => videoInputRef.current?.click()}
-          className="p-1.5 rounded hover:bg-surface-hover text-text-muted hover:text-text"
+          disabled={videoImporting}
+          className="p-1.5 rounded hover:bg-surface-hover text-text-muted hover:text-text disabled:opacity-30 disabled:hover:bg-transparent"
         >
-          <Film size={16} />
+          {videoImporting ? <Loader2 size={16} className="animate-spin" /> : <Film size={16} />}
         </button>
         <input
           ref={videoInputRef}
@@ -292,6 +409,33 @@ export function MotionEditor() {
             e.target.value = "";
           }}
         />
+        <button
+          type="button"
+          title={
+            connectMode
+              ? "Connect mode ON — click two layers to join them. Click here to exit."
+              : "Connect layers — draw a line between two layers that follows them when they move"
+          }
+          onClick={() => {
+            setConnectMode((on) => !on);
+            setConnectFrom(null);
+          }}
+          className={`p-1.5 rounded ${
+            connectMode
+              ? "bg-accent text-white"
+              : "hover:bg-surface-hover text-text-muted hover:text-text"
+          }`}
+        >
+          <Spline size={16} />
+        </button>
+        <button
+          type="button"
+          title="Animate scene in — apply a transition to every layer at once"
+          onClick={() => setTransitionOpen(true)}
+          className="p-1.5 rounded hover:bg-surface-hover text-text-muted hover:text-text"
+        >
+          <Wand2 size={16} />
+        </button>
         <button
           type="button"
           title="Insert from library (video, components, charts, callouts, cursors, device frames, text reveal)"
@@ -363,8 +507,14 @@ export function MotionEditor() {
       <ExportDialog
         isOpen={exportOpen}
         onClose={() => setExportOpen(false)}
-        projectId={state.project.id}
-        sceneId={activeScene.id}
+        project={state.project}
+        activeSceneId={activeScene.id}
+      />
+
+      <TransitionModal
+        isOpen={transitionOpen}
+        onClose={() => setTransitionOpen(false)}
+        onSelect={handleApplyTransition}
       />
 
       <InsertLibraryModal
@@ -401,7 +551,9 @@ export function MotionEditor() {
               onToggleLock={(layerId) => dispatch({ type: "TOGGLE_LOCK", layerId })}
               onToggleHidden={(layerId) => dispatch({ type: "TOGGLE_HIDDEN", layerId })}
               onReorder={(layerId, toIndex) => dispatch({ type: "REORDER_LAYER", layerId, toIndex })}
+              onDuplicate={(layerId) => dispatch({ type: "DUPLICATE_LAYER", layerId })}
               onDelete={() => dispatch({ type: "DELETE_SELECTED_LAYERS" })}
+              onOpenInsert={() => setInsertOpen(true)}
             />
           </div>
         </div>
@@ -416,6 +568,9 @@ export function MotionEditor() {
             getTransform={(layer) => getResolvedTransform(state, layer)}
             playheadMs={state.playheadMs}
             isPlaying={playback.isPlaying}
+            connectMode={connectMode}
+            connectFromLayerId={connectFrom}
+            onConnectPick={handleConnectPick}
           />
         </div>
 
@@ -448,6 +603,9 @@ export function MotionEditor() {
           onVolumeChange={(trackId, volume) => dispatch({ type: "SET_AUDIO_VOLUME", trackId, volume })}
           onDelete={(trackId) => dispatch({ type: "DELETE_AUDIO_TRACK", trackId })}
           onAddTrack={(kind) => dispatch({ type: "ADD_AUDIO_TRACK", kind })}
+          onAddMarker={(trackId, timeMs) => dispatch({ type: "ADD_AUDIO_MARKER", trackId, timeMs })}
+          onUpdateMarker={(trackId, markerId, patch) => dispatch({ type: "UPDATE_AUDIO_MARKER", trackId, markerId, patch })}
+          onDeleteMarker={(trackId, markerId) => dispatch({ type: "DELETE_AUDIO_MARKER", trackId, markerId })}
         />
       </div>
 
@@ -455,6 +613,7 @@ export function MotionEditor() {
       <div className="h-[162px] shrink-0 border-t border-border bg-surface">
         <Timeline
           scene={activeScene}
+          activeAudioTrack={activeScene.audio_tracks.find((t) => t.id === activeAudioTrackId)}
           playheadMs={state.playheadMs}
           selectedLayerIds={state.selectedLayerIds}
           isPlaying={playback.isPlaying}

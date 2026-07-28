@@ -3,14 +3,18 @@ import { X, Film, Download, Loader2, CheckCircle2, AlertCircle } from "lucide-re
 import {
   exportMotionProject,
   getMotionExportStatus,
+  cancelMotionExport,
   type MotionExportTaskStatus,
+  type MotionExportFormat,
 } from "../../api/motion";
+
+import type { MotionProject } from "../../types/motion";
 
 export interface ExportDialogProps {
   isOpen: boolean;
   onClose: () => void;
-  projectId: string;
-  sceneId?: string;
+  project: MotionProject;
+  activeSceneId: string;
 }
 
 interface ResolutionPreset {
@@ -23,9 +27,46 @@ interface ResolutionPreset {
 
 const PRESETS: ResolutionPreset[] = [
   { id: "1080p", label: "1080p Full HD (1920 × 1080)", width: 1920, height: 1080, badge: "Default" },
+  { id: "1440p", label: "1440p QHD (2560 × 1440)", width: 2560, height: 1440 },
+  { id: "4k", label: "4K UHD (3840 × 2160)", width: 3840, height: 2160, badge: "Slow" },
   { id: "720p", label: "720p HD (1280 × 720)", width: 1280, height: 720 },
   { id: "vertical", label: "Vertical Shorts/Reels (1080 × 1920)", width: 1080, height: 1920 },
   { id: "square", label: "Square Post (1080 × 1080)", width: 1080, height: 1080 },
+];
+
+interface FormatOption {
+  id: MotionExportFormat;
+  label: string;
+  hint: string;
+  /** Whether this container can actually carry an alpha channel. */
+  supportsAlpha: boolean;
+}
+
+const FORMATS: FormatOption[] = [
+  { id: "mp4", label: "MP4 video", hint: "Best for sharing and upload", supportsAlpha: false },
+  {
+    id: "mov",
+    label: "MOV (ProRes)",
+    hint: "For editing software. Large files, and the only format here that carries real transparency in video.",
+    supportsAlpha: true,
+  },
+  { id: "gif", label: "Animated GIF", hint: "Looping, no audio, large files", supportsAlpha: true },
+  {
+    id: "png_sequence",
+    label: "PNG sequence (.zip)",
+    hint: "One image per frame, for compositing elsewhere",
+    supportsAlpha: true,
+  },
+];
+
+/** Quality tiers rather than raw CRF numbers — "18" means nothing to most
+ *  people, and lower-is-better is counter-intuitive. The default maps to the
+ *  backend's existing CRF 18 so an unchanged dialog produces a byte-identical
+ *  export to before this control existed. */
+const QUALITY_OPTIONS = [
+  { id: "high", label: "High (visually lossless)", crf: "18", badge: "Default" },
+  { id: "balanced", label: "Balanced (smaller file)", crf: "23" },
+  { id: "small", label: "Small (noticeable compression)", crf: "28" },
 ];
 
 const FPS_OPTIONS = [
@@ -34,15 +75,24 @@ const FPS_OPTIONS = [
   { value: 60, label: "60 FPS (High Motion)" },
 ];
 
-export function ExportDialog({ isOpen, onClose, projectId, sceneId }: ExportDialogProps) {
+export function ExportDialog({ isOpen, onClose, project, activeSceneId }: ExportDialogProps) {
+  const sceneCount = project.scenes.length;
   const [selectedPresetId, setSelectedPresetId] = useState<string>("1080p");
   const [fps, setFps] = useState<number>(30);
+  const [format, setFormat] = useState<MotionExportFormat>("mp4");
+  const [transparent, setTransparent] = useState<boolean>(false);
+  const [allScenes, setAllScenes] = useState<boolean>(false);
+  const [qualityId, setQualityId] = useState<string>("high");
 
   const [status, setStatus] = useState<"idle" | "exporting" | "completed" | "error">("idle");
   const [progress, setProgress] = useState<number>(0);
   const [statusMessage, setStatusMessage] = useState<string>("");
   const [downloadPath, setDownloadPath] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  // The running task's id, so it can be cancelled. Null when nothing is
+  // in flight.
+  const [taskId, setTaskId] = useState<string | null>(null);
+  const [cancelling, setCancelling] = useState(false);
 
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -72,6 +122,8 @@ export function ExportDialog({ isOpen, onClose, projectId, sceneId }: ExportDial
   if (!isOpen) return null;
 
   const currentPreset = PRESETS.find((p) => p.id === selectedPresetId) || PRESETS[0];
+  const currentFormat = FORMATS.find((f) => f.id === format) || FORMATS[0];
+  const currentQuality = QUALITY_OPTIONS.find((q) => q.id === qualityId) || QUALITY_OPTIONS[0];
 
   async function handleStartExport() {
     setStatus("exporting");
@@ -80,14 +132,22 @@ export function ExportDialog({ isOpen, onClose, projectId, sceneId }: ExportDial
     setErrorMessage(null);
 
     try {
-      const res = await exportMotionProject(projectId, {
-        scene_id: sceneId,
+      const res = await exportMotionProject(project.id, {
+        scene_id: activeSceneId,
         fps,
         width: currentPreset.width,
         height: currentPreset.height,
+        format,
+        all_scenes: allScenes,
+        video_crf: currentQuality.crf,
+        // Never send transparent:true for a container that can't carry alpha
+        // — the backend would render background-less frames and then flatten
+        // them to yuv420p, giving black where the user expected transparency.
+        transparent: currentFormat.supportsAlpha ? transparent : false,
       });
 
       const newTaskId = res.task_id;
+      setTaskId(newTaskId);
 
       pollIntervalRef.current = setInterval(async () => {
         try {
@@ -100,6 +160,17 @@ export function ExportDialog({ isOpen, onClose, projectId, sceneId }: ExportDial
 
           if (taskStatus.done) {
             clearPolling();
+            setTaskId(null);
+            setCancelling(false);
+            // A cancelled task carries an `error` string, but it isn't a
+            // failure — the user asked for it. Branch on the machine status,
+            // not on the presence of error text.
+            if (taskStatus.status === "cancelled") {
+              setStatus("idle");
+              setProgress(0);
+              setStatusMessage("Export cancelled.");
+              return;
+            }
             if (taskStatus.error) {
               setStatus("error");
               setErrorMessage(taskStatus.error);
@@ -116,6 +187,20 @@ export function ExportDialog({ isOpen, onClose, projectId, sceneId }: ExportDial
       }, 1000);
     } catch (err) {
       setStatus("error");
+      setErrorMessage(String(err));
+    }
+  }
+
+  async function handleCancelExport() {
+    if (!taskId) return;
+    setCancelling(true);
+    try {
+      await cancelMotionExport(taskId);
+      // Don't tear down state here — the poll above sees status "cancelled"
+      // and resets consistently, so cancelling via the UI and the task
+      // ending on its own take the exact same path.
+    } catch (err) {
+      setCancelling(false);
       setErrorMessage(String(err));
     }
   }
@@ -146,6 +231,73 @@ export function ExportDialog({ isOpen, onClose, projectId, sceneId }: ExportDial
 
         {/* Body */}
         <div className="p-5 space-y-4 text-sm">
+          {/* Scope. Hidden on single-scene projects, where "whole project"
+              and "this scene" are the same thing and the choice is just
+              noise. */}
+          {sceneCount > 1 && (
+            <div className="space-y-1.5">
+              <label className="block text-xs font-medium text-text-muted">Scope</label>
+              <select
+                value={allScenes ? "all" : "one"}
+                onChange={(e) => setAllScenes(e.target.value === "all")}
+                disabled={status === "exporting"}
+                className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:outline-none focus:border-accent disabled:opacity-50"
+              >
+                <option value="one">This scene only</option>
+                <option value="all">Whole project ({sceneCount} scenes)</option>
+              </select>
+              <p className="text-[11px] text-text-faint">
+                {allScenes
+                  ? "All scenes render back-to-back into one continuous file."
+                  : "Only the scene you're currently editing."}
+              </p>
+            </div>
+          )}
+
+          {/* Format */}
+          <div className="space-y-1.5">
+            <label className="block text-xs font-medium text-text-muted">Format</label>
+            <select
+              value={format}
+              onChange={(e) => setFormat(e.target.value as MotionExportFormat)}
+              disabled={status === "exporting"}
+              className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:outline-none focus:border-accent disabled:opacity-50"
+            >
+              {FORMATS.map((f) => (
+                <option key={f.id} value={f.id}>
+                  {f.label}
+                </option>
+              ))}
+            </select>
+            <p className="text-[11px] text-text-faint">{currentFormat.hint}</p>
+          </div>
+
+          {/* Transparency — only offered for containers that can carry alpha.
+              Showing it for MP4 would be a lie: H.264 has no alpha channel, so
+              the frames get flattened to yuv420p and the user gets black
+              instead of transparency. */}
+          {currentFormat.supportsAlpha ? (
+            <label className="flex items-start gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={transparent}
+                onChange={(e) => setTransparent(e.target.checked)}
+                disabled={status === "exporting"}
+                className="mt-0.5 accent-accent"
+              />
+              <span>
+                <span className="block text-xs text-text">Transparent background</span>
+                <span className="block text-[11px] text-text-faint">
+                  Omits the scene background so the export can be composited over other footage.
+                </span>
+              </span>
+            </label>
+          ) : (
+            <p className="text-[11px] text-text-faint">
+              MP4 can&apos;t store transparency — choose GIF or PNG sequence if you need it.
+            </p>
+          )}
+
           {/* Resolution Preset */}
           <div className="space-y-1.5">
             <label className="block text-xs font-medium text-text-muted">Resolution Preset</label>
@@ -162,6 +314,27 @@ export function ExportDialog({ isOpen, onClose, projectId, sceneId }: ExportDial
               ))}
             </select>
           </div>
+
+          {/* Quality — only meaningful for the encoded video formats. GIF
+              quality is driven by its palette, and a PNG sequence is
+              lossless, so offering a CRF there would be meaningless. */}
+          {(format === "mp4" || format === "mov") && (
+            <div className="space-y-1.5">
+              <label className="block text-xs font-medium text-text-muted">Quality</label>
+              <select
+                value={qualityId}
+                onChange={(e) => setQualityId(e.target.value)}
+                disabled={status === "exporting"}
+                className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:outline-none focus:border-accent disabled:opacity-50"
+              >
+                {QUALITY_OPTIONS.map((q) => (
+                  <option key={q.id} value={q.id}>
+                    {q.label} {q.badge ? `(${q.badge})` : ""}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
 
           {/* Framerate Selection */}
           <div className="space-y-1.5">
@@ -180,11 +353,52 @@ export function ExportDialog({ isOpen, onClose, projectId, sceneId }: ExportDial
             </select>
           </div>
 
-          {/* Export Format Info */}
-          <div className="flex items-center justify-between p-3 rounded-lg bg-background border border-border/50 text-xs">
-            <span className="text-text-muted">Export Format</span>
-            <span className="font-medium text-text">MP4 (H.264 / AAC)</span>
-          </div>
+          {/* Pre-flight Summary */}
+          {(() => {
+            const totalDurationMs = allScenes 
+              ? project.scenes.reduce((acc, s) => acc + s.duration_ms, 0)
+              : (project.scenes.find(s => s.id === activeSceneId)?.duration_ms || 0);
+            
+            const durationSec = totalDurationMs / 1000;
+            const frameCount = Math.ceil(durationSec * fps);
+            
+            const hasAudio = allScenes 
+              ? project.scenes.some(s => s.audio_tracks.some(t => !t.muted))
+              : (project.scenes.find(s => s.id === activeSceneId)?.audio_tracks.some(t => !t.muted) || false);
+            
+            const slowFactors = [];
+            if (currentPreset.width >= 3840) slowFactors.push("4K");
+            if (fps >= 60) slowFactors.push("60fps");
+            if (allScenes && sceneCount > 1) slowFactors.push("whole project");
+            
+            const isSlow = slowFactors.length > 0 || durationSec > 30;
+
+            return (
+              <div className="flex flex-col gap-2 p-3 rounded-lg bg-background border border-border/50 text-xs">
+                <div className="flex items-center justify-between">
+                  <span className="text-text-muted">Resolution</span>
+                  <span className="font-medium text-text">{currentPreset.width} × {currentPreset.height}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-text-muted">Duration</span>
+                  <span className="font-medium text-text">{durationSec.toFixed(2)}s ({frameCount} frames)</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-text-muted">Audio</span>
+                  <span className="font-medium text-text">{hasAudio ? "Included" : "Silent (no active tracks)"}</span>
+                </div>
+                
+                {isSlow && (
+                  <div className="mt-2 p-2 rounded bg-amber-500/10 border border-amber-500/20 text-amber-500 flex items-start gap-2">
+                    <AlertCircle size={14} className="shrink-0 mt-0.5" />
+                    <span>
+                      This export will be slow to render. ({slowFactors.join(" + ")}{slowFactors.length > 0 && durationSec > 30 ? " + " : ""}{durationSec > 30 ? "long duration" : ""}).
+                    </span>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
 
           {/* Progress / Status Display */}
           {status === "exporting" && (
@@ -202,6 +416,17 @@ export function ExportDialog({ isOpen, onClose, projectId, sceneId }: ExportDial
                   style={{ width: `${Math.max(3, progress)}%` }}
                 />
               </div>
+              {/* A 4K whole-project export can run for over ten minutes.
+                  Without this the only way to stop one is to kill the app,
+                  and the frames it has already written stay on disk. */}
+              <button
+                type="button"
+                onClick={handleCancelExport}
+                disabled={!taskId || cancelling}
+                className="w-full text-xs text-text-muted hover:text-danger disabled:opacity-40 py-1"
+              >
+                {cancelling ? "Cancelling…" : "Cancel export"}
+              </button>
             </div>
           )}
 

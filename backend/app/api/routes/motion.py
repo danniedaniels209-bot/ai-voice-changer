@@ -10,6 +10,7 @@ import mimetypes
 import threading
 import uuid
 from pathlib import Path
+from typing import Any
 
 from fastapi import APIRouter
 from fastapi.responses import FileResponse
@@ -60,15 +61,19 @@ def delete_project(project_id: str) -> dict:
 
 _export_tasks: dict[str, dict] = {}
 _export_lock = threading.Lock()
+_TERMINAL_EXPORT_STATUSES = {"done", "failed", "cancelled"}
 
 
 class ExportRequest(BaseModel):
     scene_id: str | None = None
+    all_scenes: bool = False
     fps: int = 30
     width: int = 1920
     height: int = 1080
     format: str = "mp4"
     transparent: bool = False
+    video_crf: str = "18"
+    video_bitrate: str | None = None
     base_url: str | None = None
 
 
@@ -76,11 +81,14 @@ def _run_export(
     task_id: str,
     project_id: str,
     scene_id: str | None = None,
+    all_scenes: bool = False,
     fps: int = 30,
     width: int = 1920,
     height: int = 1080,
     format: str = "mp4",
     transparent: bool = False,
+    video_crf: str = "18",
+    video_bitrate: str | None = None,
     base_url: str | None = None,
 ) -> None:
     def publish(**fields) -> None:
@@ -89,17 +97,29 @@ def _run_export(
                 _export_tasks[task_id].update(fields)
 
     try:
+        with _export_lock:
+            task = _export_tasks.get(task_id)
+            cancel_event = task["_cancel_event"] if task else threading.Event()
+            if task and cancel_event.is_set():
+                task.update(status="cancelled", done=True, progress=0.0, error="Motion export was cancelled.")
+                return
+
         publish(status="rendering", progress=0.0)
         output_file = export_service.export_project(
             project_id=project_id,
             scene_id=scene_id,
+            all_scenes=all_scenes,
             fps=fps,
             width=width,
             height=height,
             format=format,
             transparent=transparent,
+            video_crf=video_crf,
+            video_bitrate=video_bitrate,
             base_url=base_url,
-            progress_callback=lambda p, msg: publish(progress=p, status=msg),
+            cancel_event=cancel_event,
+            status_callback=lambda status: publish(status=status),
+            progress_callback=lambda p, msg: publish(progress=p, message=msg),
         )
         download_url = f"/motion/exports/download/{output_file.name}"
         publish(
@@ -109,9 +129,15 @@ def _run_export(
             export_path=str(output_file),
             download_path=download_url,
         )
+    except export_service.ExportCancelled as exc:
+        publish(status="cancelled", done=True, error=str(exc), progress=0.0)
     except Exception as exc:
         logger.exception("Export background task failed for project %s", project_id)
-        publish(status="error", done=True, error=str(exc))
+        publish(status="failed", done=True, error=str(exc))
+
+
+def _public_export_task(task: dict[str, Any]) -> dict:
+    return {key: value for key, value in task.items() if not key.startswith("_")}
 
 
 @router.post("/projects/{project_id}/export")
@@ -130,9 +156,11 @@ def export_project_endpoint(project_id: str, body: ExportRequest | None = None) 
             "status": "queued",
             "done": False,
             "progress": 0.0,
+            "message": "Queued",
             "export_path": None,
             "download_path": None,
             "error": None,
+            "_cancel_event": threading.Event(),
         }
 
     threading.Thread(
@@ -141,11 +169,14 @@ def export_project_endpoint(project_id: str, body: ExportRequest | None = None) 
             task_id,
             project_id,
             req.scene_id,
+            req.all_scenes,
             req.fps,
             req.width,
             req.height,
             req.format,
             req.transparent,
+            req.video_crf,
+            req.video_bitrate,
             req.base_url,
         ),
         daemon=True,
@@ -162,7 +193,25 @@ def get_export_status(task_id: str) -> dict:
         task = _export_tasks.get(task_id)
     if task is None:
         raise JobNotFoundError(f"Export task '{task_id}' not found.")
-    return task
+    return _public_export_task(task)
+
+
+@router.delete("/exports/{task_id}")
+def cancel_export(task_id: str) -> dict:
+    with _export_lock:
+        task = _export_tasks.get(task_id)
+        if task is None:
+            raise JobNotFoundError(f"Export task '{task_id}' not found.")
+        if task["status"] in _TERMINAL_EXPORT_STATUSES:
+            return _public_export_task(task)
+        task["_cancel_event"].set()
+        task.update(
+            status="cancelled",
+            done=True,
+            error="Motion export was cancelled.",
+            message="Cancelled",
+        )
+        return _public_export_task(task)
 
 
 @router.get("/exports/download/{filename}")
@@ -175,4 +224,3 @@ def download_export(filename: str) -> FileResponse:
     # was only ever true before GIF/PNG-sequence export existed.
     media_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
     return FileResponse(str(file_path), media_type=media_type, filename=filename)
-

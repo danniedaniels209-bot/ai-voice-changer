@@ -6,9 +6,9 @@
  * working unchanged.
  */
 
-import type { AudioTrack, AudioTrackKind } from "../../types/motion";
+import type { AudioTrack, AudioTrackKind, AudioMarker } from "../../types/motion";
 
-export type { AudioTrack, AudioTrackKind, AudioKeyframe } from "../../types/motion";
+export type { AudioTrack, AudioTrackKind, AudioKeyframe, AudioMarker } from "../../types/motion";
 
 export interface AudioTrackPanelProps {
   tracks: AudioTrack[];
@@ -20,4 +20,7 @@ export interface AudioTrackPanelProps {
   onVolumeChange: (trackId: string, volume: number) => void;
   onDelete: (trackId: string) => void;
   onAddTrack: (kind: AudioTrackKind) => void;
+  onAddMarker: (trackId: string, timeMs: number) => void;
+  onUpdateMarker: (trackId: string, markerId: string, patch: Partial<AudioMarker>) => void;
+  onDeleteMarker: (trackId: string, markerId: string) => void;
 }

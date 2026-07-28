@@ -1,6 +1,7 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef } from "react";
 import { Mic, Music, Volume2, VolumeX, Zap, Trash2, GripVertical } from "lucide-react";
-import type { AudioTrackPanelProps, AudioTrackKind } from "./audioTypes";
+import type { AudioTrackPanelProps, AudioTrackKind, AudioTrack, AudioMarker } from "./audioTypes";
+import { Waveform } from "./WaveformCanvas";
 
 const KIND_ICONS: Record<AudioTrackKind, typeof Mic> = {
   voiceover: Mic,
@@ -20,53 +21,76 @@ const KIND_COLORS: Record<AudioTrackKind, string> = {
   sfx: "text-amber-400",
 };
 
-/**
- * Simple waveform placeholder - generates a deterministic "waveform" shape
- * based on the track ID so it looks consistent without decoding real audio.
- */
-function WaveformPlaceholder({ trackId, width = 120, height = 32, className = "" }: { trackId: string; width?: number; height?: number; className?: string }) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
 
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
 
-    const dpr = window.devicePixelRatio || 1;
-    canvas.width = width * dpr;
-    canvas.height = height * dpr;
-    ctx.scale(dpr, dpr);
+function MarkerContainer({
+  track,
+  onAddMarker,
+  onUpdateMarker,
+  onDeleteMarker,
+}: {
+  track: AudioTrack;
+  onAddMarker: (trackId: string, timeMs: number) => void;
+  onUpdateMarker: (trackId: string, markerId: string, patch: Partial<AudioMarker>) => void;
+  onDeleteMarker: (trackId: string, markerId: string) => void;
+}) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const duration = Math.max(1, track.duration_ms);
 
-    // Generate deterministic pseudo-random bars from track ID
-    let seed = 0;
-    for (let i = 0; i < trackId.length; i++) {
-      seed = ((seed << 5) - seed) + trackId.charCodeAt(i);
-      seed |= 0;
-    }
-
-    const barCount = 24;
-    const barWidth = width / barCount;
-    const maxHeight = height * 0.8;
-    const centerY = height / 2;
-
-    ctx.fillStyle = "rgba(99, 102, 241, 0.6)"; // indigo-400 with opacity
-
-    for (let i = 0; i < barCount; i++) {
-      // Simple LCG for deterministic "random" heights
-      seed = (seed * 1664525 + 1013904223) >>> 0;
-      const normalized = (seed % 1000) / 1000;
-      const barHeight = Math.max(2, normalized * maxHeight);
-
-      const x = i * barWidth + barWidth * 0.1;
-      const y = centerY - barHeight / 2;
-      const w = barWidth * 0.8;
-
-      ctx.fillRect(x, y, w, barHeight);
-    }
-  }, [trackId, width, height]);
-
-  return <canvas ref={canvasRef} width={width} height={height} className={className} />;
+  return (
+    <div 
+      ref={containerRef}
+      className="relative cursor-crosshair w-[100px] h-[28px] shrink-0 bg-surface-hover/50 rounded overflow-hidden group/track" 
+      onClick={(e) => {
+        const rect = e.currentTarget.getBoundingClientRect();
+        const percent = (e.clientX - rect.left) / rect.width;
+        onAddMarker(track.id, Math.round(percent * duration));
+      }}
+      title="Click to add marker"
+    >
+      <Waveform sourceUrl={track.source_url} width={100} height={28} className="opacity-60 pointer-events-none" />
+      
+      {track.markers?.map((marker) => {
+        const leftPercent = (marker.time_ms / duration) * 100;
+        
+        return (
+          <div 
+            key={marker.id} 
+            className="absolute top-0 bottom-0 w-px bg-yellow-400 z-10 cursor-ew-resize group/marker"
+            style={{ left: `${leftPercent}%` }}
+            onClick={(e) => e.stopPropagation()}
+            onPointerDown={(e) => {
+              e.stopPropagation();
+              (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
+              
+              const handleMove = (moveEvent: PointerEvent) => {
+                if (!containerRef.current) return;
+                const rect = containerRef.current.getBoundingClientRect();
+                const percent = Math.max(0, Math.min(1, (moveEvent.clientX - rect.left) / rect.width));
+                onUpdateMarker(track.id, marker.id, { time_ms: Math.round(percent * duration) });
+              };
+              
+              const handleUp = (upEvent: PointerEvent) => {
+                (upEvent.currentTarget as HTMLDivElement)?.releasePointerCapture(upEvent.pointerId);
+                window.removeEventListener("pointermove", handleMove);
+                window.removeEventListener("pointerup", handleUp);
+              };
+              
+              window.addEventListener("pointermove", handleMove);
+              window.addEventListener("pointerup", handleUp);
+            }}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              onDeleteMarker(track.id, marker.id);
+            }}
+            title={`${marker.label} (Right-click to delete)`}
+          >
+            <div className="absolute -top-0 -translate-x-1/2 w-1.5 h-1.5 rounded-full bg-yellow-400 group-hover/marker:scale-150 transition-transform" />
+          </div>
+        );
+      })}
+    </div>
+  );
 }
 
 export function AudioTrackPanel({
@@ -79,6 +103,9 @@ export function AudioTrackPanel({
   onVolumeChange,
   onDelete,
   onAddTrack,
+  onAddMarker,
+  onUpdateMarker,
+  onDeleteMarker,
 }: AudioTrackPanelProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
 
@@ -163,8 +190,13 @@ export function AudioTrackPanel({
                 </span>
               )}
 
-              {/* Waveform placeholder */}
-              <WaveformPlaceholder trackId={track.id} width={100} height={28} className="opacity-60" />
+              {/* Waveform & Markers */}
+              <MarkerContainer 
+                track={track} 
+                onAddMarker={onAddMarker} 
+                onUpdateMarker={onUpdateMarker} 
+                onDeleteMarker={onDeleteMarker} 
+              />
 
               {/* Volume slider */}
               <div className="flex items-center gap-1.5 shrink-0">

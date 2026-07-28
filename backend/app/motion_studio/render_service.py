@@ -9,6 +9,7 @@ and screenshots each frame to PNG files. Supports transparent background renderi
 from __future__ import annotations
 
 import os
+import threading
 import uuid
 from pathlib import Path
 from typing import Callable
@@ -29,14 +30,22 @@ def render_frames(
     width: int = 1920,
     height: int = 1080,
     transparent: bool = False,
+    output_format: str = "png",
     base_url: str | None = None,
+    start_index: int = 0,
+    cancel_event: threading.Event | None = None,
     progress_callback: Callable[[float], None] | None = None,
 ) -> list[Path]:
     """
     Loads a MotionStudio project, navigates headless Playwright browser to the
     /render/:projectId route ONCE, drives time forward via window.__setRenderTime(ms),
-    screenshots each frame to PNG files, and returns the list of generated PNG paths.
+    screenshots each frame to image files, and returns the list of generated frame paths.
     """
+    if output_format not in {"png", "jpeg"}:
+        raise AppError("Rendered frame output_format must be 'png' or 'jpeg'.")
+    if transparent and output_format != "png":
+        raise AppError("Transparent frame rendering requires PNG output.")
+
     project = storage.load_project(project_id)
     scene = None
     if scene_id:
@@ -85,7 +94,7 @@ def render_frames(
     frame_paths: list[Path] = []
     try:
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
+            browser = p.chromium.launch(headless=True, args=["--disable-gpu"])
             context = browser.new_context(viewport={"width": width, "height": height})
             page = context.new_page()
 
@@ -97,12 +106,25 @@ def render_frames(
             page.wait_for_selector('[data-render-ready="true"]', timeout=10000)
 
             for i in range(total_frames):
+                if cancel_event and cancel_event.is_set():
+                    break
                 t_ms = int(round((i * 1000.0) / fps))
                 page.evaluate("(ms) => { if (window.__setRenderTime) { window.__setRenderTime(ms); } }", t_ms)
                 page.wait_for_selector(f'[data-render-time="{t_ms}"]', timeout=10000)
 
-                frame_path = output_dir / f"frame_{i:06d}.png"
-                page.screenshot(path=str(frame_path), full_page=True, omit_background=transparent)
+                if cancel_event and cancel_event.is_set():
+                    break
+                suffix = "jpg" if output_format == "jpeg" else "png"
+                frame_path = output_dir / f"frame_{start_index + i:06d}.{suffix}"
+                screenshot_options = {
+                    "path": str(frame_path),
+                    "full_page": True,
+                    "type": output_format,
+                    "omit_background": transparent,
+                }
+                if output_format == "jpeg":
+                    screenshot_options["quality"] = 95
+                page.screenshot(**screenshot_options)
                 frame_paths.append(frame_path)
 
                 if progress_callback:

@@ -1,4 +1,4 @@
-import { apiGet, apiPost, apiPut, apiDelete } from "./client";
+import { API_BASE_URL, apiGet, apiPost, apiPut, apiDelete, apiUpload } from "./client";
 import type { MotionProject } from "../types/motion";
 
 export interface MotionProjectSummary {
@@ -28,18 +28,51 @@ export function deleteMotionProject(id: string): Promise<{ deleted: boolean }> {
   return apiDelete<{ deleted: boolean }>(`/motion/projects/${id}`);
 }
 
+export type MotionExportFormat = "mp4" | "mov" | "gif" | "png_sequence";
+
 export interface MotionExportOptions {
   scene_id?: string;
   fps?: number;
   width?: number;
   height?: number;
+  format?: MotionExportFormat;
+  /** Render frames with no background. Only meaningful for gif and
+   *  png_sequence — H.264 can't carry an alpha channel, so the mp4 path
+   *  flattens to yuv420p regardless of what's requested here. */
+  transparent?: boolean;
+  /** Export every scene in the project, in order, as one continuous file.
+   *  Deliberately an explicit flag rather than "omit scene_id" — omitting
+   *  scene_id has always meant "the first scene", and changing that meaning
+   *  would silently turn existing callers' single-scene exports into
+   *  whole-project renders. */
+  all_scenes?: boolean;
+  /** Constant Rate Factor for the mp4 encoder — lower is higher quality and
+   *  a bigger file. Default "18" is visually lossless for most content;
+   *  omitted means the backend keeps that default. */
+  video_crf?: string;
+  /** Target bitrate (e.g. "12M"). When set it takes precedence over CRF —
+   *  useful when a platform requires a specific bitrate. */
+  video_bitrate?: string | null;
   base_url?: string;
 }
+
+/** Machine-readable lifecycle state. Distinct from `message`, which is the
+ *  human-facing string — client logic must branch on this, never on the
+ *  message text. */
+export type MotionExportStatus =
+  | "queued"
+  | "rendering"
+  | "encoding"
+  | "done"
+  | "failed"
+  | "cancelled";
 
 export interface MotionExportTaskStatus {
   task_id: string;
   project_id: string;
-  status: string;
+  status: MotionExportStatus;
+  /** Human-readable progress text, safe to show but not to branch on. */
+  message?: string;
   done: boolean;
   progress: number;
   export_path: string | null;
@@ -58,3 +91,33 @@ export function getMotionExportStatus(taskId: string): Promise<MotionExportTaskS
   return apiGet<MotionExportTaskStatus>(`/motion/projects/export/${taskId}`);
 }
 
+export interface MotionAssetUploadResponse {
+  asset_id: string;
+  filename: string;
+  source_url: string;
+  content_type: string | null;
+  size_bytes: number;
+}
+
+export function uploadMotionAsset(
+  file: File,
+  onProgress?: (percent: number) => void,
+): Promise<MotionAssetUploadResponse> {
+  const form = new FormData();
+  form.append("file", file);
+  return apiUpload<MotionAssetUploadResponse>("/motion/assets/upload", form, onProgress);
+}
+
+export function resolveMotionAssetUrl(sourceUrl: string): string {
+  if (!sourceUrl) return "";
+  if (/^(blob:|data:|https?:\/\/)/i.test(sourceUrl)) return sourceUrl;
+  if (sourceUrl.startsWith("/")) return `${API_BASE_URL}${sourceUrl}`;
+  return sourceUrl;
+}
+
+/** Cancel a running export. Terminal tasks come back unchanged rather than
+ *  erroring — cancelling something already finished is a no-op, not a
+ *  failure. */
+export function cancelMotionExport(taskId: string): Promise<MotionExportTaskStatus> {
+  return apiDelete<MotionExportTaskStatus>(`/motion/exports/${taskId}`);
+}

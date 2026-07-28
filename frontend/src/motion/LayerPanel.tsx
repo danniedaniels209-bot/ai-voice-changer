@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Lock, Unlock, Eye, EyeOff, Square, Circle, Type, Image as ImageIcon, Film, GripVertical } from "lucide-react";
+import { Lock, Unlock, Eye, EyeOff, Square, Circle, Type, Image as ImageIcon, Film, GripVertical, Search, Hexagon as PolygonIcon, Star as StarIcon, Triangle as TriangleIcon, Minus, ArrowRight, Copy, Plus } from "lucide-react";
 import type { LayerType, MotionLayer } from "../types/motion";
 
 interface LayerPanelProps {
@@ -10,7 +10,9 @@ interface LayerPanelProps {
   onToggleLock: (layerId: string) => void;
   onToggleHidden: (layerId: string) => void;
   onReorder: (layerId: string, toIndex: number) => void;
+  onDuplicate: (layerId: string) => void;
   onDelete: () => void;
+  onOpenInsert?: () => void;
 }
 
 const ICONS: Record<LayerType, typeof Square> = {
@@ -19,6 +21,11 @@ const ICONS: Record<LayerType, typeof Square> = {
   text: Type,
   image: ImageIcon,
   video: Film,
+  polygon: PolygonIcon,
+  star: StarIcon,
+  triangle: TriangleIcon,
+  line: Minus,
+  arrow: ArrowRight,
 };
 
 export function LayerPanel({
@@ -29,14 +36,22 @@ export function LayerPanel({
   onToggleLock,
   onToggleHidden,
   onReorder,
+  onDuplicate,
   onDelete,
+  onOpenInsert,
 }: LayerPanelProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draggingId, setDraggingId] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
 
   // Layer panel convention: topmost row = topmost in the stacking order
   // (rendered last / on top), so reverse the underlying bottom-to-top array.
-  const displayLayers = [...layers].reverse();
+  // Filtering happens AFTER the reverse so the visible order is unchanged;
+  // it only ever hides rows, never reorders them.
+  const q = query.trim().toLowerCase();
+  const displayLayers = [...layers]
+    .reverse()
+    .filter((l) => (q ? l.name.toLowerCase().includes(q) : true));
 
   function handleDrop(targetLayerId: string) {
     if (!draggingId || draggingId === targetLayerId) return;
@@ -61,11 +76,52 @@ export function LayerPanel({
         )}
       </div>
 
+      {layers.length > 5 && (
+        <div className="px-2 py-1.5 border-b border-border shrink-0">
+          <div className="relative">
+            <Search
+              size={12}
+              className="absolute left-2 top-1/2 -translate-y-1/2 text-text-faint pointer-events-none"
+            />
+            <input
+              type="text"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Filter layers…"
+              className="w-full bg-background border border-border rounded pl-6 pr-2 py-1 text-xs
+                         text-text placeholder:text-text-faint focus:outline-none focus:border-accent"
+            />
+          </div>
+        </div>
+      )}
+
       <div className="flex-1 overflow-y-auto">
+        {/* Distinguish "nothing here" from "nothing matched" — otherwise a
+            filter with no hits reads as though the scene lost its layers. */}
         {displayLayers.length === 0 && (
-          <p className="text-xs text-text-faint px-3 py-4 text-center">
-            No layers yet — add a shape, text, or image from the toolbar.
-          </p>
+          <div className="flex flex-col items-center justify-center p-6 text-center text-text-muted mt-4">
+            {q ? (
+              <p className="text-xs">No layers match “{query}”.</p>
+            ) : (
+              <>
+                <Square size={24} className="mb-3 text-text-faint/70" />
+                <h4 className="text-sm font-medium text-text mb-1">Scene is empty</h4>
+                <p className="text-xs text-text-faint mb-4 leading-relaxed max-w-[180px]">
+                  Layers appear here. Add shapes, text, or import media to start.
+                </p>
+                {onOpenInsert && (
+                  <button
+                    type="button"
+                    onClick={onOpenInsert}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-surface-hover hover:bg-accent hover:text-white transition-colors border border-border rounded text-xs font-medium text-text"
+                  >
+                    <Plus size={14} />
+                    Add Layer
+                  </button>
+                )}
+              </>
+            )}
+          </div>
         )}
         {displayLayers.map((layer) => {
           const Icon = ICONS[layer.type];
@@ -124,6 +180,17 @@ export function LayerPanel({
                   {layer.name}
                 </span>
               )}
+              <button
+                type="button"
+                title="Duplicate layer"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onDuplicate(layer.id);
+                }}
+                className="text-text-faint hover:text-text shrink-0"
+              >
+                <Copy size={12} />
+              </button>
               <button
                 type="button"
                 title={layer.hidden ? "Show layer" : "Hide layer"}

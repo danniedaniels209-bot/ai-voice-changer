@@ -18,6 +18,7 @@
  */
 
 import { useEffect, useRef } from "react";
+import { resolveMotionAssetUrl } from "../../api/motion";
 import type { VideoLayerProps } from "../../types/motion";
 
 export interface VideoLayerViewProps {
@@ -46,6 +47,7 @@ function sourceTimeFor(video: VideoLayerProps, playheadMs: number): number {
 
 export function VideoLayerView({ video, width, height, playheadMs, isPlaying }: VideoLayerViewProps) {
   const ref = useRef<HTMLVideoElement | null>(null);
+  const src = resolveMotionAssetUrl(video.source_url);
 
   // Keep the element's playback state in step with the transport.
   useEffect(() => {
@@ -92,7 +94,7 @@ export function VideoLayerView({ video, width, height, playheadMs, isPlaying }: 
     <foreignObject width={width} height={height}>
       <video
         ref={ref}
-        src={video.source_url}
+        src={src}
         playsInline
         preload="auto"
         // Deliberately no autoPlay/loop: this element's time is owned by the

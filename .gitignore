@@ -12,6 +12,7 @@ exports/
 logs/
 models/
 motion_projects/
+motion_assets/
 backend/app_settings.json
 backend/.env
 

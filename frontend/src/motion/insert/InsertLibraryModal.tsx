@@ -18,6 +18,7 @@ import { CursorPicker } from "../cursor/CursorPicker";
 import { DeviceFramePicker } from "../deviceframes/DeviceFramePicker";
 import { TextFxPicker } from "../textfx/TextFxPicker";
 import { VideoImportPanel } from "../video/VideoImportPanel";
+import { TechIconLibraryPanel } from "../icons/TechIconLibraryPanel";
 import type { MotionLayer } from "../../types/motion";
 
 export interface InsertLibraryModalProps {
@@ -76,6 +77,7 @@ export function InsertLibraryModal({ isOpen, onClose, onInsertLayers, onImportVi
           <CursorPicker onInsert={insertAndClose} />
           <DeviceFramePicker onInsert={insertAndClose} />
           <TextFxPicker onInsert={insertAndClose} />
+          <TechIconLibraryPanel onInsert={insertAndClose} />
         </div>
       </div>
     </div>
