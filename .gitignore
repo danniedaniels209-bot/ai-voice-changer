@@ -25,3 +25,4 @@ ffmpeg/*.exe
 # Frontend build IS committed (deploy/DEPLOY.md relies on it)
 # frontend/dist/  <- intentionally NOT ignored
 custom_tools/
+backend/_*_tmp.py

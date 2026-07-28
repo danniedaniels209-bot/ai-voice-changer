@@ -214,7 +214,7 @@ def cancel_export(task_id: str) -> dict:
         return _public_export_task(task)
 
 
-@router.get("/exports/download/{filename}")
+@router.get("/exports/download/{filename}", response_model=None)
 def download_export(filename: str) -> FileResponse:
     file_path = Paths.exports / filename
     if not file_path.exists() or not file_path.is_file():

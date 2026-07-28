@@ -67,6 +67,9 @@ export function MotionEditor() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [transitionOpen, setTransitionOpen] = useState(false);
+  // LT-KEYFRAMEUI — which keyframe is currently selected for easing editing
+  // in the Inspector. Null when no keyframe is selected.
+  const [selectedKeyframe, setSelectedKeyframe] = useState<{ layerId: string; keyframeId: string } | null>(null);
   // Connect mode: click one layer, then a second, to join them. Held here
   // (not in MotionCanvas) because the toolbar button and the canvas both
   // need it, and it isn't project data — nothing to save or undo.
@@ -598,6 +601,16 @@ export function MotionEditor() {
               dispatch({ type: "SET_KEYFRAME", layerId: selectedLayer.id, property, timeMs: state.playheadMs, value })
             }
             onApplyPreset={handleApplyPreset}
+            selectedKeyframe={selectedKeyframe}
+            onUpdateKeyframeEasing={(easing) => {
+              if (!selectedKeyframe) return;
+              dispatch({
+                type: "UPDATE_KEYFRAME",
+                layerId: selectedKeyframe.layerId,
+                keyframeId: selectedKeyframe.keyframeId,
+                patch: { easing },
+              });
+            }}
           />
         </div>
       </div>
@@ -635,6 +648,7 @@ export function MotionEditor() {
           }
           onDeleteKeyframe={(layerId, keyframeId) => dispatch({ type: "DELETE_KEYFRAME", layerId, keyframeId })}
           onTogglePlay={playback.toggle}
+          onSelectKeyframe={(layerId, keyframeId) => setSelectedKeyframe({ layerId, keyframeId })}
         />
       </div>
 

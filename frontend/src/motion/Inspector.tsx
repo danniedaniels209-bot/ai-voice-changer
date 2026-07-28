@@ -1,4 +1,5 @@
 import { Diamond } from "lucide-react";
+import type { EasingType } from "../types/motion";
 import type { AnimatableProperty, MotionLayer, Transform } from "../types/motion";
 import type { GradientFill } from "./gradients/gradientTypes";
 import { GradientPicker } from "./gradients/GradientPicker";
@@ -35,6 +36,11 @@ interface InspectorProps {
   onUpdateLayer: (patch: Partial<MotionLayer>) => void;
   onSetKeyframe: (property: AnimatableProperty, value: number) => void;
   onApplyPreset: (presetId: PresetId) => void;
+  // LT-KEYFRAMEUI — the currently selected keyframe (for easing editing).
+  // Null when no keyframe is selected.
+  selectedKeyframe?: { layerId: string; keyframeId: string } | null;
+  /** Change the selected keyframe's easing. */
+  onUpdateKeyframeEasing?: (easing: EasingType) => void;
 }
 
 function NumberField({
@@ -179,6 +185,19 @@ function SecondsField({
 // dragging or frame-stepping.
 const TIME_TOLERANCE_MS = 8;
 
+/** Plain-language labels — "ease_in_out" is the wire value, not something to
+ *  show a user. Order runs simple -> expressive. */
+const EASING_OPTIONS: { id: EasingType; label: string }[] = [
+  { id: "linear", label: "Linear (no easing)" },
+  { id: "ease_in", label: "Ease in (slow start)" },
+  { id: "ease_out", label: "Ease out (slow finish)" },
+  { id: "ease_in_out", label: "Ease in & out" },
+  { id: "overshoot", label: "Overshoot (past, then settle)" },
+  { id: "spring", label: "Spring (bouncy settle)" },
+  { id: "bounce", label: "Bounce" },
+  { id: "elastic", label: "Elastic" },
+];
+
 export function Inspector({
   layer,
   playheadMs,
@@ -186,6 +205,8 @@ export function Inspector({
   onUpdateLayer,
   onSetKeyframe,
   onApplyPreset,
+  selectedKeyframe,
+  onUpdateKeyframeEasing,
 }: InspectorProps) {
   if (!layer) {
     return (
@@ -196,6 +217,10 @@ export function Inspector({
   }
 
   const t = layer.transform;
+  const activeKeyframe =
+    selectedKeyframe && selectedKeyframe.layerId === layer.id
+      ? layer.keyframes.find((k) => k.id === selectedKeyframe.keyframeId)
+      : undefined;
 
   function keyframeAt(property: AnimatableProperty) {
     return layer!.keyframes.find(
@@ -213,6 +238,35 @@ export function Inspector({
 
   return (
     <div className="p-3 space-y-4 overflow-y-auto h-full">
+      {/* Easing for the selected keyframe. The 8 easings existed with no way
+          to change one after creation — a keyframe was stuck with whatever it
+          was made with. Shown only when a keyframe on THIS layer is selected,
+          so it doesn't imply it's editing something else. */}
+      {selectedKeyframe && selectedKeyframe.layerId === layer.id && activeKeyframe && (
+        <div className="border border-accent/40 rounded-lg bg-accent-dim/40 p-2.5">
+          <span className="text-xs font-semibold uppercase tracking-wide text-text-faint block mb-1.5">
+            Keyframe easing
+          </span>
+          <p className="text-[10px] text-text-faint mb-2">
+            {activeKeyframe.property} at {(activeKeyframe.time_ms / 1000).toFixed(2)}s
+          </p>
+          <select
+            value={activeKeyframe.easing}
+            onChange={(e) => onUpdateKeyframeEasing?.(e.target.value as EasingType)}
+            className="w-full bg-surface border border-border rounded px-2 py-1 text-sm"
+          >
+            {EASING_OPTIONS.map((o) => (
+              <option key={o.id} value={o.id}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+          <p className="text-[10px] text-text-faint mt-1.5">
+            Controls how the animation arrives AT this keyframe.
+          </p>
+        </div>
+      )}
+
       <PresetPicker onApply={onApplyPreset} title="Motion presets" />
 
       <div>

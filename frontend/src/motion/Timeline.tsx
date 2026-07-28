@@ -23,6 +23,9 @@ interface TimelineProps {
   onMoveKeyframe: (layerId: string, keyframeId: string, timeMs: number) => void;
   onDeleteKeyframe: (layerId: string, keyframeId: string) => void;
   onTogglePlay: () => void;
+  // LT-KEYFRAMEUI — select a keyframe to edit its easing in the Inspector.
+  // Called on click (not drag) so the Inspector can show the easing dropdown.
+  onSelectKeyframe?: (layerId: string, keyframeId: string) => void;
   // LT-TIMELINE — drag the bar body / drag a trim handle. Optional so this
   // file compiles even if the host hasn't wired the reducer yet (the bars
   // simply won't be draggable until those props are passed).
@@ -65,6 +68,7 @@ export function Timeline({
   onTogglePlay,
   onRetimeLayer,
   onTrimLayer,
+  onSelectKeyframe,
 }: TimelineProps) {
   const [pxPerSec, setPxPerSec] = useState(80);
   const trackRef = useRef<HTMLDivElement>(null);
@@ -352,6 +356,10 @@ export function Timeline({
                         key={kf.id}
                         title={`${kf.property} = ${kf.value} @ ${(ms / 1000).toFixed(2)}s (${kf.easing})`}
                         onMouseDown={(e) => handleKeyframeMouseDown(e, layer.id, kf.id)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onSelectKeyframe?.(layer.id, kf.id);
+                        }}
                         onDoubleClick={(e) => {
                           e.stopPropagation();
                           onDeleteKeyframe(layer.id, kf.id);
@@ -360,7 +368,27 @@ export function Timeline({
                           inRange ? "" : "opacity-30"
                         }`}
                         style={{ left: msToPx(ms) }}
-                      />
+                      >
+                        {/* LT-KEYFRAMEUI — small easing indicator dot. Color-coded by
+                            easing family so a user scanning the track can tell linear
+                            from bounce/elastic/spring at a glance. */}
+                        <div
+                          className="absolute inset-0 flex items-center justify-center pointer-events-none"
+                          style={{ transform: "rotate(-45deg)" }}
+                        >
+                          <span
+                            className={`w-1 h-1 rounded-full ${
+                              kf.easing === "linear" ? "bg-white/60" :
+                              kf.easing.startsWith("ease") ? "bg-blue-400" :
+                              kf.easing === "bounce" ? "bg-yellow-400" :
+                              kf.easing === "elastic" ? "bg-pink-400" :
+                              kf.easing === "spring" ? "bg-green-400" :
+                              kf.easing === "overshoot" ? "bg-orange-400" :
+                              "bg-white/40"
+                            }`}
+                          />
+                        </div>
+                      </div>
                     );
                   })}
                 </div>

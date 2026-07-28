@@ -85,7 +85,7 @@ def get_job_segments(job_id: str) -> dict:
     }
 
 
-@router.post("/{job_id}/segments/preview")
+@router.post("/{job_id}/segments/preview", response_model=None)
 def preview_job_segment(job_id: str, request: PreviewEditRequest) -> FileResponse:
     """Render one (possibly edited) segment so the user can hear it before
     committing to a re-export. Cached — repeat listens are instant."""
@@ -122,7 +122,7 @@ def reexport_job(job_id: str, request: ReexportRequest) -> Job:
     return claimed
 
 
-@router.get("/{job_id}/result")
+@router.get("/{job_id}/result", response_model=None)
 def get_job_result(job_id: str, variant: str = "main") -> FileResponse:
     """
     Streams a finished job's output so the UI can play/download it.

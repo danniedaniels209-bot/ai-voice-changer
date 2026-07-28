@@ -167,7 +167,14 @@ def create_app() -> FastAPI:
 
         index_file = frontend_dist / "index.html"
 
-        @app.get("/{full_path:path}")
+        # include_in_schema=False: this catch-all matches every path, so it
+        # would otherwise appear in the API docs as a route that serves
+        # everything, which is noise. response_model=None because this module
+        # uses `from __future__ import annotations` — the `-> FileResponse`
+        # annotation reaches FastAPI as a string it then tries to build a
+        # response schema from, which 500s /openapi.json and takes /docs with
+        # it. The annotation stays for readers; FastAPI just ignores it.
+        @app.get("/{full_path:path}", response_model=None, include_in_schema=False)
         async def spa_fallback(full_path: str) -> FileResponse:
             candidate = frontend_dist / full_path
             if full_path and candidate.is_file():

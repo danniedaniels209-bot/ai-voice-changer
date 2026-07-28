@@ -84,7 +84,7 @@ def delete_custom_voice(name: str) -> dict:
     return {"deleted": name}
 
 
-@router.get("/voices/custom/{name}/preview")
+@router.get("/voices/custom/{name}/preview", response_model=None)
 def custom_voice_preview(name: str) -> FileResponse:
     from app.utils import custom_voices
 
@@ -99,7 +99,7 @@ class TryVoiceRequest(BaseModel):
     exaggeration: float = Field(default=0.5, ge=0.0, le=1.0)
 
 
-@router.post("/voices/try")
+@router.post("/voices/try", response_model=None)
 def try_voice(request: TryVoiceRequest) -> FileResponse:
     """
     Audition a voice on the user's OWN words before committing to a full
@@ -131,7 +131,7 @@ def try_voice(request: TryVoiceRequest) -> FileResponse:
     return FileResponse(str(path), media_type="audio/wav", filename=path.name)
 
 
-@router.get("/voices/{voice_id}/preview")
+@router.get("/voices/{voice_id}/preview", response_model=None)
 def voice_preview(voice_id: str) -> FileResponse:
     """
     A short spoken sample of the voice, synthesized once and cached on disk

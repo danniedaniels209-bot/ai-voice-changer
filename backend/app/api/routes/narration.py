@@ -122,7 +122,7 @@ async def upload_script(file: UploadFile = File(...)) -> dict:
     return {"script": _extract_text(file.filename or "", data)}
 
 
-@router.post("/preview")
+@router.post("/preview", response_model=None)
 def preview(request: PreviewRequest) -> FileResponse:
     device = get_hardware_info(get_effective_device_mode()).resolved_device
     wav = engine.render_segment(
@@ -160,12 +160,12 @@ def _studio_wav(studio_id: str) -> Path:
     return wav
 
 
-@router.get("/{studio_id}/audio")
+@router.get("/{studio_id}/audio", response_model=None)
 def audio(studio_id: str) -> FileResponse:
     return FileResponse(str(_studio_wav(studio_id)), media_type="audio/wav")
 
 
-@router.get("/{studio_id}/export")
+@router.get("/{studio_id}/export", response_model=None)
 def export(studio_id: str, format: str = "wav", subtitles: bool = False) -> FileResponse:
     wav = _studio_wav(studio_id)
     if subtitles:

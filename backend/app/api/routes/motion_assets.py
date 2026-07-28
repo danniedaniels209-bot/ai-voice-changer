@@ -215,7 +215,7 @@ async def upload_motion_asset(file: UploadFile = File(...)) -> dict:
     }
 
 
-@router.get("/{asset_id}/{filename}")
+@router.get("/{asset_id}/{filename}", response_model=None)
 def get_motion_asset(asset_id: str, filename: str) -> FileResponse:
     asset_path = _asset_file(asset_id, filename)
     if not asset_path.exists() or not asset_path.is_file():
