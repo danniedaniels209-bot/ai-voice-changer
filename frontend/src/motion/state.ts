@@ -97,6 +97,10 @@ export type EditorAction =
   | { type: "UPDATE_SCENE_MARKER"; markerId: string; patch: Partial<SceneMarker> }
   | { type: "DELETE_SCENE_MARKER"; markerId: string }
   | { type: "SPLIT_LAYER"; layerId: string; timeMs: number }
+  // LT-RIPPLE: ripple editing closes gaps on delete/trim by shifting
+  // everything after the affected region. Both take ONE undo snapshot.
+  | { type: "RIPPLE_DELETE" }
+  | { type: "RIPPLE_TRIM"; layerId: string; endMs: number }
   | { type: "UNDO" }
   | { type: "REDO" };
 
@@ -352,6 +356,75 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
       return { ...state, ...snapshot(state), project, selectedLayerIds: [], dirty: true };
     }
 
+    case "RIPPLE_DELETE": {
+      if (state.selectedLayerIds.length === 0) return state;
+      const delScene = activeScene(state.project, state.activeSceneId);
+      // Cascade: deleting a folder also deletes its descendants
+      const toDelete = new Set(state.selectedLayerIds);
+      for (const id of state.selectedLayerIds) {
+        for (const descId of getDescendants(id, delScene.layers)) {
+          toDelete.add(descId);
+        }
+      }
+      const deletedLayers = delScene.layers.filter((l) => toDelete.has(l.id));
+      if (deletedLayers.length === 0) return state;
+      const resolvedStart = (l: typeof delScene.layers[0]) => l.visible_start_ms ?? 0;
+      const resolvedEnd = (l: typeof delScene.layers[0]) => l.visible_end_ms ?? delScene.duration_ms;
+
+      // The deleted layers are treated as a set of DISJOINT spans, not as one
+      // [min, max) zone. Collapsing them to a single zone is wrong as soon as
+      // the selection is non-contiguous: deleting A[1-2s] and C[5-6s] removes
+      // 2s of content in two gaps, but a single zone reports 5s and shifts
+      // everything after 6s left by that much — which lands D[7-8s] at 2s,
+      // BEFORE the surviving B[3-4s]. Ripple may move layers earlier; it must
+      // never reorder them.
+      const merged: Array<[number, number]> = [];
+      for (const [s0, e0] of deletedLayers
+        .map((l) => [resolvedStart(l), resolvedEnd(l)] as [number, number])
+        .filter(([s0, e0]) => e0 > s0)
+        .sort((a, b) => a[0] - b[0])) {
+        const last = merged[merged.length - 1];
+        // Overlapping deletions must not be counted twice.
+        if (last && s0 <= last[1]) last[1] = Math.max(last[1], e0);
+        else merged.push([s0, e0]);
+      }
+
+      /** Total deleted duration lying entirely before `ms`. */
+      const shiftFor = (ms: number) =>
+        merged.reduce((acc, [s0, e0]) => (e0 <= ms ? acc + (e0 - s0) : acc), 0);
+
+      // Remove deleted layers, then pull each survivor earlier by however much
+      // deleted content sat before it. Writing nulls to concrete ints is
+      // intentional — after a ripple the layer genuinely has a specific
+      // position, not "use the scene default".
+      const project = withScene(state.project, state.activeSceneId, (s) => ({
+        ...s,
+        layers: s.layers
+          .filter((l) => !toDelete.has(l.id))
+          .map((l) => {
+            const ls = resolvedStart(l);
+            const le = resolvedEnd(l);
+            const delta = shiftFor(ls);
+            if (delta > 0) {
+              const shifted = {
+                ...l,
+                visible_start_ms: ls - delta,
+                visible_end_ms: le - delta,
+                keyframes: l.keyframes.map((k) => ({ ...k, time_ms: k.time_ms - delta })),
+              };
+              if (shifted.visible_start_ms < 0) {
+                console.warn("RIPPLE_DELETE produced a negative start time — bug upstream");
+              }
+              return shifted;
+            }
+            return l;
+          }),
+        // Also drop connectors whose source or target just disappeared.
+        connectors: dropOrphanConnectors(s, toDelete),
+      }));
+      return { ...state, ...snapshot(state), project, selectedLayerIds: [], dirty: true };
+    }
+
     case "UPDATE_TRANSFORM": {
       const project = withScene(state.project, state.activeSceneId, (scene) =>
         withLayer(scene, action.layerId, (layer) => ({
@@ -548,6 +621,39 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
           return next;
         }),
       );
+      return { ...state, ...snapshot(state), project, dirty: true };
+    }
+
+    case "RIPPLE_TRIM": {
+      // Change a layer's visible_end_ms and shift everything after it by
+      // the delta (positive = extended → push right, negative = shortened →
+      // pull left). Works on the end handle only; the start handle is a
+      // non-ripple trim (it changes when the layer appears, not its span).
+      const trimScene = activeScene(state.project, state.activeSceneId);
+      const trimLayer = trimScene.layers.find((l) => l.id === action.layerId);
+      if (!trimLayer) return state;
+      const oldEnd = trimLayer.visible_end_ms ?? trimScene.duration_ms;
+      const delta = action.endMs - oldEnd;
+      if (delta === 0) return state;
+      const project = withScene(state.project, state.activeSceneId, (sc) => ({
+        ...sc,
+        layers: sc.layers.map((l) => {
+          if (l.id === action.layerId) {
+            return { ...l, visible_end_ms: action.endMs };
+          }
+          const ls = l.visible_start_ms ?? 0;
+          const le = l.visible_end_ms ?? sc.duration_ms;
+          if (ls >= oldEnd) {
+            return {
+              ...l,
+              visible_start_ms: ls + delta,
+              visible_end_ms: le + delta,
+              keyframes: l.keyframes.map((k) => ({ ...k, time_ms: k.time_ms + delta })),
+            };
+          }
+          return l;
+        }),
+      }));
       return { ...state, ...snapshot(state), project, dirty: true };
     }
 
