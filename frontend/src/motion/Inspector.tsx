@@ -5,6 +5,7 @@ import type { GradientFill } from "./gradients/gradientTypes";
 import { GradientPicker } from "./gradients/GradientPicker";
 import type { ShadowEffect } from "./shadowfx/shadowTypes";
 import { ShadowPicker } from "./shadowfx/ShadowPicker";
+import { CubicBezierEditor } from "./easing/CubicBezierEditor";
 import { PresetPicker } from "./presets/PresetPicker";
 import type { PresetId } from "./presets/motionPresets";
 import { VideoCropControls } from "./video/VideoCropControls";
@@ -42,6 +43,9 @@ interface InspectorProps {
   selectedKeyframe?: { layerId: string; keyframeId: string } | null;
   /** Change the selected keyframe's easing. */
   onUpdateKeyframeEasing?: (easing: EasingType) => void;
+  /** Change the selected keyframe's custom cubic-bezier control points.
+   *  Only meaningful while its easing is "custom". */
+  onUpdateKeyframeBezier?: (bezier: [number, number, number, number]) => void;
 }
 
 function NumberField({
@@ -197,7 +201,13 @@ const EASING_OPTIONS: { id: EasingType; label: string }[] = [
   { id: "spring", label: "Spring (bouncy settle)" },
   { id: "bounce", label: "Bounce" },
   { id: "elastic", label: "Elastic" },
+  { id: "custom", label: "Custom curve…" },
 ];
+
+/** Starting handles when the user first switches a keyframe to "custom".
+ *  Same values as CSS `ease`, so the curve doesn't visibly jump at the moment
+ *  they select it — it starts where a sensible default already was. */
+const DEFAULT_BEZIER: [number, number, number, number] = [0.25, 0.1, 0.25, 1];
 
 export function Inspector({
   layer,
@@ -208,6 +218,7 @@ export function Inspector({
   onApplyPreset,
   selectedKeyframe,
   onUpdateKeyframeEasing,
+  onUpdateKeyframeBezier,
 }: InspectorProps) {
   if (!layer) {
     return (
@@ -262,6 +273,22 @@ export function Inspector({
               </option>
             ))}
           </select>
+
+          {/* The bezier editor only appears for "custom" — showing it for the
+              named easings would imply the handles drive them, which they
+              don't. Falls back to DEFAULT_BEZIER so a keyframe just switched
+              to custom has handles to grab rather than collapsing to a
+              degenerate 0,0,0,0 curve. */}
+          {activeKeyframe.easing === "custom" && (
+            <div className="mt-2 flex justify-center">
+              <CubicBezierEditor
+                value={activeKeyframe.easing_bezier ?? DEFAULT_BEZIER}
+                onChange={(bezier) => onUpdateKeyframeBezier?.(bezier)}
+                size={168}
+              />
+            </div>
+          )}
+
           <p className="text-[10px] text-text-faint mt-1.5">
             Controls how the animation arrives AT this keyframe.
           </p>

@@ -38,6 +38,7 @@ import { HistoryPanel } from "../motion/history/HistoryPanel";
 import { TransitionModal } from "../motion/transitions/TransitionModal";
 import { applyTransitionToScene } from "../motion/transitions/applyTransitionToScene";
 import { OnboardingWalkthrough } from "../motion/onboarding/OnboardingWalkthrough";
+import { SubtitleImportButton } from "../motion/subtitles/SubtitleImportButton";
 import type { AnimatableProperty, LayerType, MotionLayer, Transform } from "../types/motion";
 
 const INITIAL_STATE: EditorState = {
@@ -632,6 +633,7 @@ export function MotionEditor() {
         >
           <Shapes size={16} />
         </button>
+        <SubtitleImportButton sceneWidth={activeScene.width} sceneHeight={activeScene.height} sceneDurationMs={activeScene.duration_ms} onInsertLayers={handleInsertLayers} />
 
         <div className="w-px h-5 bg-border mx-1.5" />
 
@@ -805,6 +807,15 @@ export function MotionEditor() {
                 layerId: selectedKeyframe.layerId,
                 keyframeId: selectedKeyframe.keyframeId,
                 patch: { easing },
+              });
+            }}
+            onUpdateKeyframeBezier={(easing_bezier) => {
+              if (!selectedKeyframe) return;
+              dispatch({
+                type: "UPDATE_KEYFRAME",
+                layerId: selectedKeyframe.layerId,
+                keyframeId: selectedKeyframe.keyframeId,
+                patch: { easing_bezier },
               });
             }}
           />

@@ -21,7 +21,8 @@ export type EasingType =
   | "bounce"
   | "elastic"
   | "spring"
-  | "overshoot";
+  | "overshoot"
+  | "custom";
 
 export interface SceneMarker {
   id: string;
@@ -36,6 +37,12 @@ export interface Keyframe {
   property: AnimatableProperty;
   value: number;
   easing: EasingType;
+  /** The four control points of a cubic-bezier curve, only meaningful when
+   *  `easing === "custom"`. Same shape as CSS's cubic-bezier() — all four
+   *  values are clamped to [0, 1] by the editor, but easing.ts re-clamps
+   *  defensively so a hand-edited project JSON can't escape the range.
+   *  x1/y1 = first handle, x2/y2 = second handle. */
+  easing_bezier?: [number, number, number, number];
 }
 
 export interface Transform {

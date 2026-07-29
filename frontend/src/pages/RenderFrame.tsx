@@ -4,7 +4,6 @@ import { useParams, useSearchParams } from "react-router-dom";
 import { getMotionProject, resolveMotionAssetUrl } from "../api/motion";
 import type {
   AnimatableProperty,
-  EasingType,
   MotionLayer,
   MotionProject,
   MotionScene,
@@ -12,6 +11,7 @@ import type {
   VideoLayerProps,
 } from "../types/motion";
 import { cropInset, isLayerVisibleAt, videoSourceTimeMs } from "../types/motion";
+import { ease } from "../motion/easing";
 import type { GradientFill } from "../motion/gradients/gradientTypes";
 import type { ShadowEffect } from "../motion/shadowfx/shadowTypes";
 import { lineHeight, wrapTextToLines } from "../motion/textWrap";
@@ -20,39 +20,13 @@ import { resolveConnectorEndpoints } from "../motion/connectorGeometry";
 import { Connector } from "../motion/connector/Connector";
 import type { ConnectorSpec } from "../motion/connector/ConnectorTypes";
 
-function applyEasing(p: number, easing: EasingType): number {
-  switch (easing) {
-    case "linear":
-      return p;
-    case "ease_in":
-      return p * p;
-    case "ease_out":
-      return p * (2 - p);
-    case "ease_in_out":
-      return p < 0.5 ? 2 * p * p : -1 + (4 - 2 * p) * p;
-    case "bounce": {
-      let x = p;
-      const n1 = 7.5625;
-      const d1 = 2.75;
-      if (x < 1 / d1) {
-        return n1 * x * x;
-      } else if (x < 2 / d1) {
-        return n1 * (x -= 1.5 / d1) * x + 0.75;
-      } else if (x < 2.5 / d1) {
-        return n1 * (x -= 2.25 / d1) * x + 0.9375;
-      } else {
-        return n1 * (x -= 2.625 / d1) * x + 0.984375;
-      }
-    }
-    case "elastic": {
-      if (p === 0) return 0;
-      if (p === 1) return 1;
-      return -Math.pow(2, 10 * (p - 1)) * Math.sin(((p - 1) - 0.075) * ((2 * Math.PI) / 0.3));
-    }
-    default:
-      return p;
-  }
-}
+// Easing comes from motion/easing.ts — the same module the editor canvas
+// uses. This file used to carry its OWN switch statement, and it had silently
+// fallen behind: it had no case for `spring` or `overshoot` (both hit
+// `default: return p`, so they previewed as a spring and EXPORTED AS LINEAR),
+// and no support at all for the per-keyframe custom cubic-bezier. A second
+// copy of a shared definition is the single most reliable source of
+// editor/export divergence in this project. Do not reintroduce one.
 
 function evaluateProperty(layer: MotionLayer, prop: AnimatableProperty, timeMs: number): number {
   const baseValue = layer.transform[prop];
@@ -71,7 +45,7 @@ function evaluateProperty(layer: MotionLayer, prop: AnimatableProperty, timeMs: 
       const dur = k2.time_ms - k1.time_ms;
       if (dur === 0) return k2.value;
       const p = (timeMs - k1.time_ms) / dur;
-      const eased = applyEasing(p, k2.easing || "ease_in_out");
+      const eased = ease(k2.easing || "ease_in_out", p, k2.easing_bezier);
       return k1.value + (k2.value - k1.value) * eased;
     }
   }

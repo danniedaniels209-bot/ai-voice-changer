@@ -15,6 +15,7 @@ EasingType = Literal[
     "elastic",
     "spring",
     "overshoot",
+    "custom",
 ]
 
 
@@ -24,6 +25,10 @@ class Keyframe(BaseModel):
     property: AnimatableProperty
     value: float
     easing: EasingType = "ease_in_out"
+    # Cubic-bezier control points, only meaningful when easing == "custom".
+    # Same semantics as the frontend — defaulted so existing project JSON
+    # deserialises unchanged.
+    easing_bezier: tuple[float, float, float, float] | None = None
 
 
 class Transform(BaseModel):

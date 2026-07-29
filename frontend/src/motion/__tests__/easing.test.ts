@@ -32,10 +32,20 @@ const ALL_EASINGS: EasingType[] = [
   "elastic",
   "spring",
   "overshoot",
+  "custom",
 ];
 
 /** Easings that deliberately exceed the [0,1] range mid-curve. */
 const OVERSHOOTING: EasingType[] = ["elastic", "spring", "overshoot"];
+
+/** Easings that are non-overshooting when tested with their default params.
+ *  "custom" is excluded — the whole point is its curve is user-controlled,
+ *  and the default bezier (linear) passes the within-[0,1] test. A custom
+ *  curve with control points pulled beyond the [0,1] box CAN overshoot,
+ *  and that is tested separately below. */
+const NON_OVERSHOOTING_DEFAULT = ALL_EASINGS.filter(
+  (e) => !OVERSHOOTING.includes(e) && e !== "custom",
+);
 
 describe("ease", () => {
   it.each(ALL_EASINGS)("%s starts at exactly 0", (type) => {
@@ -69,7 +79,7 @@ describe("ease", () => {
     expect(max).toBeGreaterThan(1);
   });
 
-  it.each(ALL_EASINGS.filter((e) => !OVERSHOOTING.includes(e)))(
+  it.each(NON_OVERSHOOTING_DEFAULT)(
     "%s stays within [0, 1]",
     (type) => {
       for (let i = 0; i <= 1000; i++) {
@@ -132,3 +142,65 @@ describe("interpolateProperty", () => {
     expect(interpolateProperty(mixed, "x", 0, 0)).toBe(10);
   });
 });
+
+// ── Cubic bezier (custom) easing ──────────────────────────────────────────
+
+describe("cubicBezierFor", () => {
+  it("starts at exactly 0", () => {
+    const fn = cubicBezierFor(0.25, 0.1, 0.25, 1);
+    expect(fn(0)).toBe(0);
+  });
+
+  it("ends at exactly 1", () => {
+    const fn = cubicBezierFor(0.25, 0.1, 0.25, 1);
+    expect(fn(1)).toBe(1);
+  });
+
+  it("is finite across the curve", () => {
+    const fn = cubicBezierFor(0.42, 0, 0.58, 1);
+    for (let i = 0; i <= 100; i++) {
+      expect(Number.isFinite(fn(i / 100))).toBe(true);
+    }
+  });
+
+  it("clamps input below 0", () => {
+    const fn = cubicBezierFor(0.25, 0.1, 0.25, 1);
+    expect(fn(-5)).toBe(0);
+  });
+
+  it("clamps input above 1", () => {
+    const fn = cubicBezierFor(0.25, 0.1, 0.25, 1);
+    expect(fn(5)).toBe(1);
+  });
+
+  it("returns a linear-like curve for (0, 0, 1, 1)", () => {
+    const fn = cubicBezierFor(0, 0, 1, 1);
+    expect(fn(0.5)).toBeCloseTo(0.5, 4);
+  });
+
+  it("stays within [0, 1] for a moderate ease-in-out curve", () => {
+    const fn = cubicBezierFor(0.42, 0, 0.58, 1);
+    for (let i = 0; i <= 1000; i++) {
+      const v = fn(i / 1000);
+      expect(v).toBeGreaterThanOrEqual(0);
+      expect(v).toBeLessThanOrEqual(1);
+    }
+  });
+
+  it("can overshoot when control points pull beyond the [0, 1] box", () => {
+    // Control points outside 0-1 — a cubic bezier CAN exceed 1 mid-curve.
+    // This is the custom-easing analogue of the elastic/overshoot test above.
+    //
+    // These are the CSS "back-out" handles. The previous values here were
+    // (0.25, 1.5, 0.75, -0.5), which do NOT overshoot: the y2 of -0.5 drags
+    // the tail down by as much as the y1 of 1.5 lifts the head, so the curve
+    // peaks at exactly 1.0 and the `> 1` assertion could never pass. The
+    // assertion was right and the inputs were wrong.
+    const fn = cubicBezierFor(0.34, 1.56, 0.64, 1);
+    let max = -Infinity;
+    for (let i = 0; i <= 1000; i++) max = Math.max(max, fn(i / 1000));
+    expect(max).toBeGreaterThan(1);
+  });
+});
+
+import { cubicBezierFor } from "../easing";
