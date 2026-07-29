@@ -42,8 +42,9 @@ interface InspectorProps {
   // LT-KEYFRAMEUI — the currently selected keyframe (for easing editing).
   // Null when no keyframe is selected.
   selectedKeyframe?: { layerId: string; keyframeId: string } | null;
-  /** Change the selected keyframe's easing. */
-  onUpdateKeyframeEasing?: (easing: EasingType) => void;
+  /** Change the selected keyframe's easing. When easing === "custom", bezier
+   carries the four cubic-bezier control points. */
+  onUpdateKeyframeEasing?: (easing: EasingType, bezier?: [number, number, number, number]) => void;
   /** Change the selected keyframe's custom cubic-bezier control points.
    *  Only meaningful while its easing is "custom". */
   onUpdateKeyframeBezier?: (bezier: [number, number, number, number]) => void;
@@ -265,7 +266,13 @@ export function Inspector({
           </p>
           <select
             value={activeKeyframe.easing}
-            onChange={(e) => onUpdateKeyframeEasing?.(e.target.value as EasingType)}
+            onChange={(e) => {
+              const next = e.target.value as EasingType;
+              const bezier = next === "custom"
+                ? (activeKeyframe.easing_bezier ?? DEFAULT_BEZIER)
+                : undefined;
+              onUpdateKeyframeEasing?.(next, bezier);
+            }}
             className="w-full bg-surface border border-border rounded px-2 py-1 text-sm"
           >
             {EASING_OPTIONS.map((o) => (

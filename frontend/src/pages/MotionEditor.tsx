@@ -800,13 +800,13 @@ export function MotionEditor() {
             }
             onApplyPreset={handleApplyPreset}
             selectedKeyframe={selectedKeyframe}
-            onUpdateKeyframeEasing={(easing) => {
+            onUpdateKeyframeEasing={(easing, easing_bezier) => {
               if (!selectedKeyframe) return;
               dispatch({
                 type: "UPDATE_KEYFRAME",
                 layerId: selectedKeyframe.layerId,
                 keyframeId: selectedKeyframe.keyframeId,
-                patch: { easing },
+                patch: { easing, easing_bezier },
               });
             }}
             onUpdateKeyframeBezier={(easing_bezier) => {
