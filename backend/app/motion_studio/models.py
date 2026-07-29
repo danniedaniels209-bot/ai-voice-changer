@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 LayerType = Literal["rect", "ellipse", "text", "image", "video", "polygon", "star", "triangle", "line", "arrow"]
 AnimatableProperty = Literal["x", "y", "width", "height", "rotation", "opacity", "blur"]
@@ -117,6 +117,35 @@ class ArrowLayerProps(BaseModel):
     head_angle: float = 30.0
 
 
+class SpeedKeyframe(BaseModel):
+    """One point on a video layer's speed ramp.
+
+    `time_ms` is SCENE time, matching regular Keyframes, so the two read the
+    same way on the timeline. `rate` is a playback multiplier: 1.0 is normal,
+    0.5 is half speed, 0 holds the frame.
+
+    Negative rates are rejected rather than clamped. A negative rate means
+    source time runs backwards, which breaks the monotonicity the whole
+    integration depends on — silently clamping it would leave the user with a
+    ramp that doesn't match the number they typed and no explanation.
+    """
+
+    id: str
+    time_ms: int
+    rate: float = 1.0
+    easing: EasingType = "linear"
+
+    @field_validator("rate")
+    @classmethod
+    def _rate_not_negative(cls, v: float) -> float:
+        if v < 0:
+            raise ValueError(
+                f"speed rate must be >= 0 (got {v}); use 0 to hold a frame, "
+                "and reverse playback is not supported"
+            )
+        return v
+
+
 class VideoLayerProps(BaseModel):
     source_url: str = ""
     trim_start_ms: int = 0
@@ -150,6 +179,17 @@ class VideoLayerProps(BaseModel):
     # scene is stretched. The UI sets it from the current playhead by running
     # the same scene->source mapping the renderers use.
     freeze_frame_ms: int | None = None
+
+    # Variable speed over scene time. Empty = use the constant playback_rate
+    # above, so every existing project behaves exactly as before.
+    #
+    # With ramps present, source time is the INTEGRAL of rate over scene time
+    # rather than a multiplication — frame N cannot be computed on its own,
+    # it accumulates. See speedRamp.ts on the frontend, which is the single
+    # implementation both the editor canvas and the export renderer use.
+    #
+    # freeze_frame_ms WINS over speed keyframes: a frozen layer is frozen.
+    speed_keyframes: list[SpeedKeyframe] = Field(default_factory=list)
 
 
 AudioTrackKind = Literal["voiceover", "music", "sfx"]

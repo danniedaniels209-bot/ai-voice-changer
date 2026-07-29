@@ -10,6 +10,7 @@
 import type { GradientFill } from "../motion/gradients/gradientTypes";
 import type { ShadowEffect } from "../motion/shadowfx/shadowTypes";
 import type { ConnectorStyle } from "../motion/connector/ConnectorTypes";
+import { rampedSourceElapsedMs } from "../motion/video/speedRamp";
 
 export type LayerType = "rect" | "ellipse" | "text" | "image" | "video" | "polygon" | "star" | "triangle" | "line" | "arrow";
 export type AnimatableProperty = "x" | "y" | "width" | "height" | "rotation" | "opacity" | "blur";
@@ -196,6 +197,27 @@ export interface VideoLayerProps {
    *  frame stays the same one if the layer is retimed or the scene stretched.
    *  The UI sets it from the playhead via videoSourceTimeMs(). */
   freeze_frame_ms?: number | null;
+
+  /** Variable speed over scene time — slow motion, fast forward, and ramps
+   *  between them. Absent or empty = use the constant `playback_rate` above,
+   *  so every existing project is untouched.
+   *
+   *  With ramps present, source time is the INTEGRAL of rate over scene time
+   *  rather than a multiplication. See motion/video/speedRamp.ts. */
+  speed_keyframes?: SpeedKeyframe[];
+}
+
+/** One point on a video layer's speed ramp. `time_ms` is SCENE time (matching
+ *  regular Keyframes); `rate` is a playback multiplier where 1 is normal,
+ *  0.5 is half speed and 0 holds the frame. Negative rates are rejected by
+ *  the backend and clamped to 0 here — source time must never run backwards,
+ *  because both renderers seek their <video> elements forward only. */
+export interface SpeedKeyframe {
+  id: string;
+  time_ms: number;
+  rate: number;
+  easing: EasingType;
+  easing_bezier?: [number, number, number, number];
 }
 
 /** The CSS `clip-path` value implementing a video layer's crop, or undefined
@@ -237,8 +259,15 @@ export function videoSourceTimeMs(
   visibleStartMs = 0,
 ): number {
   if (video.freeze_frame_ms != null) return Math.max(0, video.freeze_frame_ms);
-  const rate = video.playback_rate || 1;
-  const raw = video.trim_start_ms + (playheadMs - visibleStartMs) * rate;
+
+  // A speed ramp replaces the constant-rate multiplication with an integral —
+  // see motion/video/speedRamp.ts. With no ramp points this branch is skipped
+  // entirely and the arithmetic below is bit-for-bit what it always was.
+  const ramp = video.speed_keyframes;
+  const raw =
+    ramp && ramp.length > 0
+      ? video.trim_start_ms + rampedSourceElapsedMs(ramp, playheadMs, visibleStartMs)
+      : video.trim_start_ms + (playheadMs - visibleStartMs) * (video.playback_rate || 1);
   // trim_end_ms of 0 means "no end trim" (the model's default), not "trim
   // everything" — only clamp when a real end point was set.
   const clamped = video.trim_end_ms > 0 ? Math.min(raw, video.trim_end_ms) : raw;

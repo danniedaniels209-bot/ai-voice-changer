@@ -6,6 +6,7 @@ import type {
   AnimatableProperty,
   MotionLayer,
   MotionProject,
+  SpeedKeyframe,
   MotionScene,
   Transform,
   VideoLayerProps,
@@ -256,6 +257,14 @@ function renderLayer(layer: MotionLayer, timeMs: number, sceneDurationMs: number
             // Absent (not "") when the layer isn't frozen, so the seek effect
             // can tell "hold this frame at 0ms" from "not frozen".
             data-freeze={layer.video.freeze_frame_ms ?? undefined}
+            // The ramp has to reach the seek effect, which works off the DOM
+            // rather than the scene graph. JSON in an attribute keeps that one
+            // mapping shared instead of growing a second implementation here.
+            data-speed={
+              layer.video.speed_keyframes?.length
+                ? JSON.stringify(layer.video.speed_keyframes)
+                : undefined
+            }
             style={{
               width: "100%",
               height: "100%",
@@ -431,6 +440,17 @@ export function RenderFrame() {
         // uses. Do not reimplement the arithmetic here; the two copies had
         // already drifted once (visible_start was applied on this side only).
         const freeze = video.getAttribute("data-freeze");
+        const speedAttr = video.getAttribute("data-speed");
+        let speedKeyframes: SpeedKeyframe[] = [];
+        if (speedAttr) {
+          try {
+            speedKeyframes = JSON.parse(speedAttr);
+          } catch {
+            // A malformed ramp must not abort the whole export — fall back to
+            // the constant rate and let the frame render.
+            console.warn("unreadable speed ramp on a video layer; using playback_rate");
+          }
+        }
         const targetTime_s =
           videoSourceTimeMs(
             {
@@ -438,6 +458,7 @@ export function RenderFrame() {
               trim_end_ms: parseFloat(video.getAttribute("data-trim-end") || "0"),
               playback_rate: parseFloat(video.getAttribute("data-playback-rate") || "1"),
               freeze_frame_ms: freeze == null ? null : parseFloat(freeze),
+              speed_keyframes: speedKeyframes,
             } as VideoLayerProps,
             requestedTimeMs,
             parseFloat(video.getAttribute("data-visible-start") || "0"),

@@ -9,6 +9,7 @@ import { CubicBezierEditor } from "./easing/CubicBezierEditor";
 import { PresetPicker } from "./presets/PresetPicker";
 import type { PresetId } from "./presets/motionPresets";
 import { VideoCropControls } from "./video/VideoCropControls";
+import { VideoSpeedControls } from "./video/VideoSpeedControls";
 
 /** Default starting points for "Add gradient"/"Add shadow" — matches what
  *  GradientPicker / ShadowPicker already consider reasonable, so the user
@@ -665,6 +666,12 @@ export function Inspector({
                 so this heavily-contested file grows by one block rather than
                 eighty lines. */}
             <VideoCropControls
+              video={layer.video}
+              onChange={(patch) => onUpdateLayer({ video: { ...layer.video!, ...patch } })}
+              playheadMs={playheadMs}
+              visibleStartMs={layer.visible_start_ms ?? 0}
+            />
+            <VideoSpeedControls
               video={layer.video}
               onChange={(patch) => onUpdateLayer({ video: { ...layer.video!, ...patch } })}
               playheadMs={playheadMs}

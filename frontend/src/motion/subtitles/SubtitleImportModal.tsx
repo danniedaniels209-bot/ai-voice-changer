@@ -32,6 +32,22 @@ export interface SubtitleImportModalProps {
   onInsertLayers: (layers: MotionLayer[]) => void;
 }
 
+/** z-[60], not the z-50 the other editor modals use.
+ *
+ *  MotionCanvas's "Blank Canvas" empty-scene card is also z-50 and is
+ *  rendered AFTER the modals in MotionEditor's tree, so at equal z-index it
+ *  paints on top and swallows clicks aimed at the middle of the dialog — on
+ *  an empty scene, which is exactly the state a fresh project is in when you
+ *  import captions into it. Found by clicking through the built bundle, not
+ *  by reading: at z-50 the preset buttons behind the card do not respond.
+ *
+ *  Fixed here rather than in MotionCanvas because the same collision affects
+ *  the Insert / Transition / Export dialogs, that file is shared, and a
+ *  cross-cutting z-index change is the lead's call — reported in the chat
+ *  log instead of landed quietly. */
+const OVERLAY_CLASS =
+  "fixed inset-0 z-[60] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4";
+
 function fmt(seconds: number): string {
   const ms = Math.max(0, Math.round(seconds * 1000));
   const m = Math.floor(ms / 60000);
@@ -103,7 +119,7 @@ export function SubtitleImportModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4"
+      className={OVERLAY_CLASS}
       onClick={onClose}
     >
       <div

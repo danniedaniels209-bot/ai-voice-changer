@@ -120,3 +120,45 @@ def test_cropped_video_layer_round_trips_inside_a_project():
     assert restored == project
     assert restored.scenes[0].layers[0].video.crop_left == 0.25
     assert restored.scenes[0].layers[0].video.freeze_frame_ms == 500
+
+
+# --- LT-SPEEDRAMP ------------------------------------------------------------
+
+
+def test_speed_keyframes_default_to_empty_so_existing_projects_are_unchanged():
+    props = VideoLayerProps.model_validate({"source_url": "/a.mp4"})
+    assert props.speed_keyframes == []
+
+
+def test_speed_ramp_round_trips_through_json():
+    from app.motion_studio.models import SpeedKeyframe
+
+    props = VideoLayerProps(
+        source_url="/a.mp4",
+        speed_keyframes=[
+            SpeedKeyframe(id="s0", time_ms=0, rate=0.5, easing="linear"),
+            SpeedKeyframe(id="s1", time_ms=2000, rate=3.0, easing="ease_in_out"),
+        ],
+    )
+    restored = VideoLayerProps.model_validate_json(props.model_dump_json())
+    assert restored == props
+    assert restored.speed_keyframes[1].rate == 3.0
+
+
+def test_a_rate_of_zero_is_allowed_because_it_holds_a_frame():
+    from app.motion_studio.models import SpeedKeyframe
+
+    assert SpeedKeyframe(id="s", time_ms=0, rate=0).rate == 0
+
+
+def test_a_negative_rate_is_rejected_rather_than_silently_clamped():
+    """Reverse playback would break monotonicity, and both renderers seek
+    their <video> elements forward only. Failing loudly beats a ramp that
+    quietly doesn't match the number the user typed."""
+    import pytest as _pytest
+    from pydantic import ValidationError
+
+    from app.motion_studio.models import SpeedKeyframe
+
+    with _pytest.raises(ValidationError, match="must be >= 0"):
+        SpeedKeyframe(id="s", time_ms=0, rate=-1.0)
