@@ -121,6 +121,31 @@ class VideoLayerProps(BaseModel):
     volume: float = 1.0
     fit: Literal["contain", "cover", "fill"] = "contain"
 
+    # Crop, as a fraction (0-1) trimmed off each edge of the layer's box.
+    # All four default to 0 = no crop, so every existing project is unchanged.
+    #
+    # Crop TRIMS, it does not ZOOM: the remaining footage keeps its size and
+    # position and the cropped-away edges become transparent. That matches the
+    # default behaviour of the crop effect in Premiere/Resolve, and it is the
+    # only definition that renders identically in all three renderers from a
+    # single CSS `clip-path: inset(...)` with no geometry math — anything that
+    # rescales has to re-derive object-fit against a different aspect ratio in
+    # each renderer, which is exactly the kind of split that has produced
+    # editor/export divergence here before. To fill the frame with a cropped
+    # region, resize the layer.
+    crop_top: float = 0.0
+    crop_right: float = 0.0
+    crop_bottom: float = 0.0
+    crop_left: float = 0.0
+
+    # Hold a single frame instead of playing. None = play normally.
+    #
+    # This is SOURCE time (a position within the footage), not scene time, so
+    # the held frame stays the same one if the layer is later retimed or the
+    # scene is stretched. The UI sets it from the current playhead by running
+    # the same scene->source mapping the renderers use.
+    freeze_frame_ms: int | None = None
+
 
 AudioTrackKind = Literal["voiceover", "music", "sfx"]
 

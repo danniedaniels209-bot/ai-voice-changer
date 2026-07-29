@@ -6,6 +6,7 @@ from app.motion_studio.models import (
     RectLayerProps,
     TextLayerProps,
     Transform,
+    VideoLayerProps,
 )
 
 
@@ -66,3 +67,56 @@ def test_project_round_trips_with_nested_scenes_and_layers():
     restored = MotionProject.model_validate_json(project.model_dump_json())
     assert restored == project
     assert restored.scenes[0].layers[0].type == "rect"
+
+
+# --- LT-VIDEOEDIT: crop and freeze frame -------------------------------------
+#
+# These are round-trip tests rather than behaviour tests because the failure
+# mode they guard is silent: pydantic DROPS fields the running model doesn't
+# know about, so a new field that isn't actually on the deployed model just
+# vanishes on the wire with no error. That has happened here repeatedly and
+# always presents as a frontend bug.
+
+
+def test_video_crop_and_freeze_default_to_off():
+    """Existing projects have none of these keys and must be unchanged."""
+    props = VideoLayerProps.model_validate({"source_url": "/motion/assets/a.mp4"})
+    assert (props.crop_top, props.crop_right, props.crop_bottom, props.crop_left) == (
+        0.0, 0.0, 0.0, 0.0,
+    )
+    assert props.freeze_frame_ms is None
+
+
+def test_video_crop_and_freeze_round_trip_through_json():
+    props = VideoLayerProps(
+        source_url="/motion/assets/a.mp4",
+        crop_top=0.1, crop_right=0.2, crop_bottom=0.3, crop_left=0.4,
+        freeze_frame_ms=1200,
+    )
+    restored = VideoLayerProps.model_validate_json(props.model_dump_json())
+    assert restored == props
+    assert restored.crop_bottom == 0.3
+    assert restored.freeze_frame_ms == 1200
+
+
+def test_freezing_at_zero_survives_the_round_trip_as_zero_not_none():
+    """0 and None mean different things: hold the first frame vs play."""
+    props = VideoLayerProps(source_url="/a.mp4", freeze_frame_ms=0)
+    restored = VideoLayerProps.model_validate_json(props.model_dump_json())
+    assert restored.freeze_frame_ms == 0
+    assert restored.freeze_frame_ms is not None
+
+
+def test_cropped_video_layer_round_trips_inside_a_project():
+    project = MotionProject(
+        id="p1", name="Crop",
+        scenes=[MotionScene(id="s1", layers=[MotionLayer(
+            id="l1", name="Clip", type="video",
+            video=VideoLayerProps(source_url="/a.mp4", crop_left=0.25, freeze_frame_ms=500),
+        )])],
+        created_at="2026-01-01T00:00:00Z", updated_at="2026-01-01T00:00:00Z",
+    )
+    restored = MotionProject.model_validate_json(project.model_dump_json())
+    assert restored == project
+    assert restored.scenes[0].layers[0].video.crop_left == 0.25
+    assert restored.scenes[0].layers[0].video.freeze_frame_ms == 500

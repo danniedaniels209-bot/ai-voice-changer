@@ -452,6 +452,7 @@ export function MotionCanvas({
           height={t.height}
           playheadMs={playheadMs}
           isPlaying={isPlaying}
+          visibleStartMs={layer.visible_start_ms ?? 0}
         />
       ) : (
         <rect width={t.width} height={t.height} fill="#2a2a33" stroke="#444" strokeDasharray="6 4" />

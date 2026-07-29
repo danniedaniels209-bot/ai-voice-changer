@@ -7,6 +7,7 @@ import type { ShadowEffect } from "./shadowfx/shadowTypes";
 import { ShadowPicker } from "./shadowfx/ShadowPicker";
 import { PresetPicker } from "./presets/PresetPicker";
 import type { PresetId } from "./presets/motionPresets";
+import { VideoCropControls } from "./video/VideoCropControls";
 
 /** Default starting points for "Add gradient"/"Add shadow" — matches what
  *  GradientPicker / ShadowPicker already consider reasonable, so the user
@@ -632,6 +633,16 @@ export function Inspector({
                 <option value="fill">Fill</option>
               </select>
             </label>
+
+            {/* Crop + freeze frame (LT-VIDEOEDIT). Kept in its own component
+                so this heavily-contested file grows by one block rather than
+                eighty lines. */}
+            <VideoCropControls
+              video={layer.video}
+              onChange={(patch) => onUpdateLayer({ video: { ...layer.video!, ...patch } })}
+              playheadMs={playheadMs}
+              visibleStartMs={layer.visible_start_ms ?? 0}
+            />
           </div>
         </div>
       )}

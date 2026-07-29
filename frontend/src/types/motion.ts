@@ -160,6 +160,82 @@ export interface VideoLayerProps {
   muted: boolean;
   volume: number;
   fit: "contain" | "cover" | "fill";
+
+  /** Crop, as a fraction (0–1) trimmed off each edge of the layer's box.
+   *  All four default to 0 = no crop, so every existing project is unchanged.
+   *
+   *  Crop TRIMS, it does not ZOOM: the remaining footage keeps its size and
+   *  position and the cropped-away edges become transparent. That matches the
+   *  default crop effect in Premiere/Resolve, and it is the only definition
+   *  that renders identically in all three renderers from a single CSS
+   *  `clip-path: inset(...)` with no geometry math — anything that rescales
+   *  has to re-derive object-fit against a different aspect ratio in each
+   *  renderer, which is exactly the kind of split that has produced
+   *  editor/export divergence here before. To fill the frame with a cropped
+   *  region, resize the layer.
+   *
+   *  Optional (`?`) for the same reason gradient/shadow/visible_* are:
+   *  additive decoration most layers never use. Read them through
+   *  `cropInset()` below rather than inline, so all three renderers share
+   *  one definition. */
+  crop_top?: number;
+  crop_right?: number;
+  crop_bottom?: number;
+  crop_left?: number;
+
+  /** Hold a single frame instead of playing. null/absent = play normally.
+   *
+   *  SOURCE time (a position within the footage), not scene time, so the held
+   *  frame stays the same one if the layer is retimed or the scene stretched.
+   *  The UI sets it from the playhead via videoSourceTimeMs(). */
+  freeze_frame_ms?: number | null;
+}
+
+/** The CSS `clip-path` value implementing a video layer's crop, or undefined
+ *  when the layer isn't cropped.
+ *
+ *  Shared by MotionCanvas, RenderFrame and SceneThumbnail so a crop cannot
+ *  render three different ways. Opposite edges are clamped to leave at least
+ *  1% of the frame — a crop of 100% would otherwise make the layer vanish
+ *  with no way to grab it back on the canvas. */
+export function cropInset(video: VideoLayerProps): string | undefined {
+  const top = Math.min(Math.max(video.crop_top ?? 0, 0), 1);
+  const right = Math.min(Math.max(video.crop_right ?? 0, 0), 1);
+  const bottom = Math.min(Math.max(video.crop_bottom ?? 0, 0), 1);
+  const left = Math.min(Math.max(video.crop_left ?? 0, 0), 1);
+  if (!top && !right && !bottom && !left) return undefined;
+
+  const vScale = top + bottom > 0.99 ? 0.99 / (top + bottom) : 1;
+  const hScale = left + right > 0.99 ? 0.99 / (left + right) : 1;
+  const pct = (v: number) => `${(v * 100).toFixed(4)}%`;
+  return `inset(${pct(top * vScale)} ${pct(right * hScale)} ${pct(bottom * vScale)} ${pct(left * hScale)})`;
+}
+
+/** Scene time → time within the source footage, in ms.
+ *
+ *  THE one definition of that mapping. The editor canvas and the export
+ *  renderer must agree exactly or the editor lies about what you'll get —
+ *  a divergence that has bitten this project before — so both call this
+ *  rather than reimplementing it. They previously did reimplement it, and
+ *  had in fact drifted: the export subtracted `visibleStartMs` and the
+ *  editor did not, so a video layer that starts partway into the scene
+ *  previewed one frame and exported another. The export's reading is the
+ *  correct one (footage begins at its trim point when the layer appears,
+ *  rather than being already partway through), so that is what this does.
+ *
+ *  A frozen layer ignores the playhead entirely and returns its held frame. */
+export function videoSourceTimeMs(
+  video: VideoLayerProps,
+  playheadMs: number,
+  visibleStartMs = 0,
+): number {
+  if (video.freeze_frame_ms != null) return Math.max(0, video.freeze_frame_ms);
+  const rate = video.playback_rate || 1;
+  const raw = video.trim_start_ms + (playheadMs - visibleStartMs) * rate;
+  // trim_end_ms of 0 means "no end trim" (the model's default), not "trim
+  // everything" — only clamp when a real end point was set.
+  const clamped = video.trim_end_ms > 0 ? Math.min(raw, video.trim_end_ms) : raw;
+  return Math.max(0, clamped);
 }
 
 export type AudioTrackKind = "voiceover" | "music" | "sfx";

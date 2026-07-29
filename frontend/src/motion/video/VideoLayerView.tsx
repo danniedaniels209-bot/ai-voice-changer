@@ -19,6 +19,7 @@
 
 import { useEffect, useRef } from "react";
 import { resolveMotionAssetUrl } from "../../api/motion";
+import { cropInset, videoSourceTimeMs } from "../../types/motion";
 import type { VideoLayerProps } from "../../types/motion";
 
 export interface VideoLayerViewProps {
@@ -27,6 +28,12 @@ export interface VideoLayerViewProps {
   height: number;
   playheadMs: number;
   isPlaying: boolean;
+  /** The layer's scene-time in-point, so the footage starts at its trim
+   *  point when the layer appears rather than already partway through.
+   *  The export renderer has always done this; the canvas didn't, which
+   *  made retimed video layers preview a different frame than they
+   *  exported. */
+  visibleStartMs?: number;
 }
 
 /** While playing we let the element run on its own clock and only correct it
@@ -34,26 +41,25 @@ export interface VideoLayerViewProps {
  * would stutter badly — browsers can't seek at 60fps. */
 const DRIFT_TOLERANCE_S = 0.15;
 
-/** Map scene time to a time within the source footage, honouring trim. */
-function sourceTimeFor(video: VideoLayerProps, playheadMs: number): number {
-  const rate = video.playback_rate || 1;
-  const raw = (video.trim_start_ms + playheadMs * rate) / 1000;
-  // trim_end_ms of 0 means "no end trim" (the model's default), not "trim
-  // everything" — only clamp when a real end point was set.
-  const end = video.trim_end_ms > 0 ? video.trim_end_ms / 1000 : null;
-  const clamped = end !== null ? Math.min(raw, end) : raw;
-  return Math.max(0, clamped);
-}
-
-export function VideoLayerView({ video, width, height, playheadMs, isPlaying }: VideoLayerViewProps) {
+export function VideoLayerView({
+  video,
+  width,
+  height,
+  playheadMs,
+  isPlaying,
+  visibleStartMs = 0,
+}: VideoLayerViewProps) {
   const ref = useRef<HTMLVideoElement | null>(null);
   const src = resolveMotionAssetUrl(video.source_url);
+  const sourceTimeS = videoSourceTimeMs(video, playheadMs, visibleStartMs) / 1000;
 
   // Keep the element's playback state in step with the transport.
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
-    if (isPlaying) {
+    // A frozen layer holds one frame, so it never runs — otherwise its audio
+    // would keep playing under a still image.
+    if (isPlaying && video.freeze_frame_ms == null) {
       // play() rejects if the element isn't ready yet or autoplay policy
       // blocks it. Neither is fatal here — the drift correction below will
       // still keep the displayed frame roughly right — so swallow it rather
@@ -62,16 +68,17 @@ export function VideoLayerView({ video, width, height, playheadMs, isPlaying }: 
     } else {
       el.pause();
     }
-  }, [isPlaying]);
+  }, [isPlaying, video.freeze_frame_ms]);
 
   // Seek to match the playhead. While paused (scrubbing) this is exact;
   // while playing it only corrects real drift so playback stays smooth.
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
-    const target = sourceTimeFor(video, playheadMs);
+    const target = sourceTimeS;
     if (!Number.isFinite(target)) return;
-    if (!isPlaying || Math.abs(el.currentTime - target) > DRIFT_TOLERANCE_S) {
+    const frozen = video.freeze_frame_ms != null;
+    if (!isPlaying || frozen || Math.abs(el.currentTime - target) > DRIFT_TOLERANCE_S) {
       try {
         el.currentTime = target;
       } catch {
@@ -79,7 +86,7 @@ export function VideoLayerView({ video, width, height, playheadMs, isPlaying }: 
         // loadedmetadata pass below re-applies it.
       }
     }
-  }, [video, playheadMs, isPlaying]);
+  }, [video, sourceTimeS, isPlaying]);
 
   // Apply the layer's own audio/rate settings.
   useEffect(() => {
@@ -103,13 +110,13 @@ export function VideoLayerView({ video, width, height, playheadMs, isPlaying }: 
           // Metadata arriving after the seek effect ran would otherwise leave
           // the element parked at 0 until the next playhead change.
           const el = e.currentTarget;
-          const target = sourceTimeFor(video, playheadMs);
-          if (Number.isFinite(target)) el.currentTime = target;
+          if (Number.isFinite(sourceTimeS)) el.currentTime = sourceTimeS;
         }}
         style={{
           width: "100%",
           height: "100%",
           objectFit: video.fit === "cover" ? "cover" : video.fit === "fill" ? "fill" : "contain",
+          clipPath: cropInset(video),
         }}
       />
     </foreignObject>

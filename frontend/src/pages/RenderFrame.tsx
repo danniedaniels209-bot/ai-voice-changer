@@ -9,8 +9,9 @@ import type {
   MotionProject,
   MotionScene,
   Transform,
+  VideoLayerProps,
 } from "../types/motion";
-import { isLayerVisibleAt } from "../types/motion";
+import { cropInset, isLayerVisibleAt, videoSourceTimeMs } from "../types/motion";
 import type { GradientFill } from "../motion/gradients/gradientTypes";
 import type { ShadowEffect } from "../motion/shadowfx/shadowTypes";
 import { lineHeight, wrapTextToLines } from "../motion/textWrap";
@@ -278,10 +279,14 @@ function renderLayer(layer: MotionLayer, timeMs: number, sceneDurationMs: number
             data-trim-end={layer.video.trim_end_ms}
             data-playback-rate={layer.video.playback_rate}
             data-visible-start={layer.visible_start_ms ?? 0}
+            // Absent (not "") when the layer isn't frozen, so the seek effect
+            // can tell "hold this frame at 0ms" from "not frozen".
+            data-freeze={layer.video.freeze_frame_ms ?? undefined}
             style={{
               width: "100%",
               height: "100%",
               objectFit: layer.video.fit === "cover" ? "cover" : layer.video.fit === "fill" ? "fill" : "contain",
+              clipPath: cropInset(layer.video),
             }}
           />
         </foreignObject>
@@ -445,15 +450,24 @@ export function RenderFrame() {
           }
         };
 
-        const trimStart = parseFloat(video.getAttribute("data-trim-start") || "0");
-        const trimEnd = parseFloat(video.getAttribute("data-trim-end") || "0");
-        const playbackRate = parseFloat(video.getAttribute("data-playback-rate") || "1");
-        const visibleStart = parseFloat(video.getAttribute("data-visible-start") || "0");
-
-        let targetTime_s = (trimStart + (requestedTimeMs - visibleStart) * playbackRate) / 1000;
-        if (trimEnd > 0) {
-          targetTime_s = Math.min(targetTime_s, trimEnd / 1000);
-        }
+        // This effect works off the DOM rather than the scene graph (it has
+        // to address the real <video> elements), so it reads the layer's
+        // video props back out of data-* attributes and then runs them
+        // through videoSourceTimeMs — the SAME mapping the editor canvas
+        // uses. Do not reimplement the arithmetic here; the two copies had
+        // already drifted once (visible_start was applied on this side only).
+        const freeze = video.getAttribute("data-freeze");
+        const targetTime_s =
+          videoSourceTimeMs(
+            {
+              trim_start_ms: parseFloat(video.getAttribute("data-trim-start") || "0"),
+              trim_end_ms: parseFloat(video.getAttribute("data-trim-end") || "0"),
+              playback_rate: parseFloat(video.getAttribute("data-playback-rate") || "1"),
+              freeze_frame_ms: freeze == null ? null : parseFloat(freeze),
+            } as VideoLayerProps,
+            requestedTimeMs,
+            parseFloat(video.getAttribute("data-visible-start") || "0"),
+          ) / 1000;
 
         if (Math.abs(video.currentTime - targetTime_s) > 0.01) {
           video.addEventListener("seeked", onDone);
