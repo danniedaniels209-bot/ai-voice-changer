@@ -8,7 +8,7 @@
  */
 
 import { useRef, useState } from "react";
-import { Play, Pause, SkipBack, SkipForward, ZoomIn, ZoomOut, ChevronDown } from "lucide-react";
+import { Play, Pause, SkipBack, SkipForward, ZoomIn, ZoomOut, ChevronDown, Link, Link2Off } from "lucide-react";
 import type { MotionScene, AudioTrack, SceneMarker } from "../types/motion";
 import { Waveform } from "./audio/WaveformCanvas";
 
@@ -26,6 +26,9 @@ interface TimelineProps {
   onMoveKeyframe: (layerId: string, keyframeId: string, timeMs: number) => void;
   onDeleteKeyframe: (layerId: string, keyframeId: string) => void;
   onTogglePlay: () => void;
+  /** LT-RIPPLE — when true, delete/end-trim ripple everything after. */
+  rippleMode?: boolean;
+  onToggleRipple?: () => void;
   // LT-KEYFRAMEUI — select a keyframe to edit its easing in the Inspector.
   // Called on click (not drag) so the Inspector can show the easing dropdown.
   onSelectKeyframe?: (layerId: string, keyframeId: string) => void;
@@ -74,6 +77,8 @@ export function Timeline({
   onTogglePlay,
   onRetimeLayer,
   onTrimLayer,
+  rippleMode,
+  onToggleRipple,
   onSelectKeyframe,
   onAddSceneMarker,
   onUpdateSceneMarker,
@@ -252,6 +257,16 @@ export function Timeline({
           </span>
         )}
         <div className="flex-1" />
+        {onToggleRipple && (
+          <button
+            type="button"
+            title={rippleMode ? "Ripple on: delete/trim shifts everything after" : "Ripple off: delete/trim leaves a hole"}
+            onClick={onToggleRipple}
+            className={`p-1 rounded hover:bg-surface-hover ${rippleMode ? "text-accent" : "text-text-faint"}`}
+          >
+            {rippleMode ? <Link size={14} /> : <Link2Off size={14} />}
+          </button>
+        )}
         {onCollapse && (
           <button
             type="button"

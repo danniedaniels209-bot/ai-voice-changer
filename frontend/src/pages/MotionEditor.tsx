@@ -75,6 +75,7 @@ export function MotionEditor() {
   // (not in MotionCanvas) because the toolbar button and the canvas both
   // need it, and it isn't project data — nothing to save or undo.
   const [connectMode, setConnectMode] = useState(false);
+  const [rippleMode, setRippleMode] = useState(false);
   const [connectFrom, setConnectFrom] = useState<string | null>(null);
   const [videoImporting, setVideoImporting] = useState(false);
   // The editor stacks fixed-height panels under the canvas. On a laptop that
@@ -88,6 +89,38 @@ export function MotionEditor() {
   const [timelineOpen, setTimelineOpen] = useState(
     () => localStorage.getItem("motion_timeline_open") !== "0",
   );
+
+  // LT-PANELS — resizable panel sizes persisted to localStorage.
+  // Keys: leftSidebar, rightSidebar, audioHeight, timelineHeight.
+  // All clamped against viewport on mount so a size saved on a large
+  // monitor doesn't overflow a laptop screen.
+  const [leftSidebarWidth, setLeftSidebarWidth] = useState(() => {
+    const saved = localStorage.getItem("motion_left_sidebar_width");
+    return saved ? Math.max(180, Math.min(400, Number(saved))) : 220;
+  });
+  const [rightSidebarWidth, setRightSidebarWidth] = useState(() => {
+    const saved = localStorage.getItem("motion_right_sidebar_width");
+    return saved ? Math.max(200, Math.min(500, Number(saved))) : 260;
+  });
+  const [audioHeight, setAudioHeight] = useState(() => {
+    const saved = localStorage.getItem("motion_audio_height");
+    return saved ? Math.max(80, Math.min(300, Number(saved))) : 112;
+  });
+  const [timelineHeight, setTimelineHeight] = useState(() => {
+    const saved = localStorage.getItem("motion_timeline_height");
+    return saved ? Math.max(100, Math.min(400, Number(saved))) : 162;
+  });
+
+  // Clamp persisted sizes against current viewport on mount.
+  // Runs once after first render so window.innerHeight is available.
+  useEffect(() => {
+    const vh = window.innerHeight;
+    // Reserve: toolbar(48) + history(~60) + minimum canvas(200) + dividers(~12)
+    const reserved = 48 + 60 + 200 + 12;
+    const maxBottom = Math.max(80, vh - reserved - leftSidebarWidth);
+    setAudioHeight((h) => Math.min(h, maxBottom * 0.6));
+    setTimelineHeight((h) => Math.min(h, maxBottom * 0.6));
+  }, []);
   const autosaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const videoInputRef = useRef<HTMLInputElement | null>(null);
   // The keydown effect below binds once (empty deps) so it doesn't rebind on
@@ -95,6 +128,18 @@ export function MotionEditor() {
   // ref is refreshed each render and read inside the handler instead.
   // Same stale-closure problem as playbackRef: the keydown effect binds once.
   const selectionRef = useRef<string[]>([]);
+  const rippleModeRef = useRef(false);
+  // LT-PANELS drag state. These live HERE, with the other refs, and not down
+  // beside their handlers — there are `Loading…` / error early returns further
+  // down, so a hook declared after them doesn't run on the first render and
+  // does on the next. That is React error #310 ("rendered more hooks than
+  // during the previous render"), and it takes the whole editor down: the
+  // canvas never mounts at all. Any new hook in this component goes above
+  // those returns.
+  const leftSidebarDrag = useRef<{ startX: number; startWidth: number } | null>(null);
+  const rightSidebarDrag = useRef<{ startX: number; startWidth: number } | null>(null);
+  const audioDrag = useRef<{ startY: number; startHeight: number } | null>(null);
+  const timelineDrag = useRef<{ startY: number; startHeight: number } | null>(null);
   const playbackRef = useRef<{
     hasContent: boolean;
     toggle: () => void;
@@ -167,7 +212,9 @@ export function MotionEditor() {
         if (id) dispatch({ type: "SPLIT_LAYER", layerId: id, timeMs: playbackRef.current.playheadMs });
       } else if (e.key === "Delete" || e.key === "Backspace") {
         e.preventDefault();
-        dispatch({ type: "DELETE_SELECTED_LAYERS" });
+        // Reading a ref set by the last render to avoid stale-closure issues.
+        const ripple = rippleModeRef.current;
+        dispatch({ type: ripple ? "RIPPLE_DELETE" : "DELETE_SELECTED_LAYERS" });
       } else if (!playbackRef.current.hasContent && (
         e.key === " " || e.code === "Space" ||
         e.key === "ArrowLeft" || e.key === "ArrowRight" ||
@@ -214,6 +261,7 @@ export function MotionEditor() {
     dispatch({ type: "SET_PLAYHEAD", timeMs: ms }),
   );
   selectionRef.current = state.selectedLayerIds;
+  rippleModeRef.current = rippleMode;
   // Transport keys are disabled on an empty scene for the same reason the
   // timeline's buttons are — nothing to play, so Space shouldn't sweep a
   // playhead over a blank canvas.
@@ -382,6 +430,99 @@ export function MotionEditor() {
     if (Object.keys(toBase).length > 0) {
       dispatch({ type: "UPDATE_TRANSFORM", layerId, patch: toBase });
     }
+  }
+
+  // LT-PANELS — drag handlers for resizable panels.
+  // Each handler clamps to sensible min/max and persists to localStorage.
+  // The drag refs themselves are declared up with the other refs, ABOVE the
+  // loading/error early returns — see the note there.
+
+  function handleLeftSidebarMouseDown(e: React.MouseEvent) {
+    e.preventDefault();
+    leftSidebarDrag.current = { startX: e.clientX, startWidth: leftSidebarWidth };
+    window.addEventListener("mousemove", handleLeftSidebarMouseMove);
+    window.addEventListener("mouseup", handleLeftSidebarMouseUp);
+  }
+
+  function handleLeftSidebarMouseMove(e: MouseEvent) {
+    const drag = leftSidebarDrag.current;
+    if (!drag) return;
+    const delta = e.clientX - drag.startX;
+    const newWidth = Math.max(180, Math.min(400, drag.startWidth + delta));
+    setLeftSidebarWidth(newWidth);
+  }
+
+  function handleLeftSidebarMouseUp() {
+    leftSidebarDrag.current = null;
+    window.removeEventListener("mousemove", handleLeftSidebarMouseMove);
+    window.removeEventListener("mouseup", handleLeftSidebarMouseUp);
+    localStorage.setItem("motion_left_sidebar_width", String(leftSidebarWidth));
+  }
+
+  function handleRightSidebarMouseDown(e: React.MouseEvent) {
+    e.preventDefault();
+    rightSidebarDrag.current = { startX: e.clientX, startWidth: rightSidebarWidth };
+    window.addEventListener("mousemove", handleRightSidebarMouseMove);
+    window.addEventListener("mouseup", handleRightSidebarMouseUp);
+  }
+
+  function handleRightSidebarMouseMove(e: MouseEvent) {
+    const drag = rightSidebarDrag.current;
+    if (!drag) return;
+    const delta = drag.startX - e.clientX; // inverted: drag left = wider
+    const newWidth = Math.max(200, Math.min(500, drag.startWidth + delta));
+    setRightSidebarWidth(newWidth);
+  }
+
+  function handleRightSidebarMouseUp() {
+    rightSidebarDrag.current = null;
+    window.removeEventListener("mousemove", handleRightSidebarMouseMove);
+    window.removeEventListener("mouseup", handleRightSidebarMouseUp);
+    localStorage.setItem("motion_right_sidebar_width", String(rightSidebarWidth));
+  }
+
+  function handleAudioMouseDown(e: React.MouseEvent) {
+    e.preventDefault();
+    audioDrag.current = { startY: e.clientY, startHeight: audioHeight };
+    window.addEventListener("mousemove", handleAudioMouseMove);
+    window.addEventListener("mouseup", handleAudioMouseUp);
+  }
+
+  function handleAudioMouseMove(e: MouseEvent) {
+    const drag = audioDrag.current;
+    if (!drag) return;
+    const delta = e.clientY - drag.startY;
+    const newHeight = Math.max(80, Math.min(300, drag.startHeight + delta));
+    setAudioHeight(newHeight);
+  }
+
+  function handleAudioMouseUp() {
+    audioDrag.current = null;
+    window.removeEventListener("mousemove", handleAudioMouseMove);
+    window.removeEventListener("mouseup", handleAudioMouseUp);
+    localStorage.setItem("motion_audio_height", String(audioHeight));
+  }
+
+  function handleTimelineMouseDown(e: React.MouseEvent) {
+    e.preventDefault();
+    timelineDrag.current = { startY: e.clientY, startHeight: timelineHeight };
+    window.addEventListener("mousemove", handleTimelineMouseMove);
+    window.addEventListener("mouseup", handleTimelineMouseUp);
+  }
+
+  function handleTimelineMouseMove(e: MouseEvent) {
+    const drag = timelineDrag.current;
+    if (!drag) return;
+    const delta = drag.startY - e.clientY; // inverted: drag up = taller
+    const newHeight = Math.max(100, Math.min(400, drag.startHeight + delta));
+    setTimelineHeight(newHeight);
+  }
+
+  function handleTimelineMouseUp() {
+    timelineDrag.current = null;
+    window.removeEventListener("mousemove", handleTimelineMouseMove);
+    window.removeEventListener("mouseup", handleTimelineMouseUp);
+    localStorage.setItem("motion_timeline_height", String(timelineHeight));
   }
 
   return (
@@ -577,7 +718,7 @@ export function MotionEditor() {
 
       {/* ── Workspace ── */}
       <div className="flex-1 flex min-h-0">
-        <div className="w-[220px] shrink-0 border-r border-border bg-surface flex flex-col">
+        <div className={`w-[${leftSidebarWidth}px] shrink-0 border-r border-border bg-surface flex flex-col`}>
           <div className="h-[160px] shrink-0 border-b border-border overflow-hidden">
             <ScenePanel
               scenes={state.project.scenes}
@@ -606,7 +747,17 @@ export function MotionEditor() {
           </div>
         </div>
 
-        <div className="flex-1 min-w-0">
+        {/* Left sidebar resize handle */}
+        <div
+          onMouseDown={handleLeftSidebarMouseDown}
+          className="w-1 cursor-col-resize bg-transparent hover:bg-accent/20 active:bg-accent/40 transition-colors flex items-center justify-center"
+          style={{ minWidth: 4 }}
+          title="Drag to resize sidebar"
+        >
+          <div className="w-px h-8 bg-border/50" />
+        </div>
+
+        <div className="flex-1 min-w-0 flex flex-col">
           <MotionCanvas
             scene={activeScene}
             selectedLayerIds={state.selectedLayerIds}
@@ -623,7 +774,17 @@ export function MotionEditor() {
           />
         </div>
 
-        <div className="w-[260px] shrink-0 border-l border-border bg-surface">
+        {/* Right sidebar resize handle */}
+        <div
+          onMouseDown={handleRightSidebarMouseDown}
+          className="w-1 cursor-col-resize bg-transparent hover:bg-accent/20 active:bg-accent/40 transition-colors flex items-center justify-center"
+          style={{ minWidth: 4 }}
+          title="Drag to resize inspector"
+        >
+          <div className="w-px h-8 bg-border/50" />
+        </div>
+
+        <div className={`w-[${rightSidebarWidth}px] shrink-0 border-l border-border bg-surface`}>
           <Inspector
             layer={selectedLayer}
             playheadMs={state.playheadMs}
@@ -651,7 +812,7 @@ export function MotionEditor() {
       </div>
 
       {/* ── Audio tracks ── */}
-      <div className={`shrink-0 border-t border-border ${audioOpen ? "h-[112px]" : ""}`}>
+      <div className={`shrink-0 border-t border-border ${audioOpen ? `h-[${audioHeight}px]` : ""}`}>
         {!audioOpen ? (
           <button
             type="button"
@@ -683,8 +844,19 @@ export function MotionEditor() {
         )}
       </div>
 
+      {/* Audio / Timeline resize handle (only when both open) */}
+      {audioOpen && timelineOpen && (
+        <div
+          onMouseDown={handleAudioMouseDown}
+          className="h-1 cursor-row-resize bg-transparent hover:bg-accent/20 active:bg-accent/40 transition-colors flex items-center justify-center"
+          title="Drag to resize audio/timeline"
+        >
+          <div className="w-full h-px bg-border/50" />
+        </div>
+      )}
+
       {/* ── Timeline ── */}
-      <div className={`shrink-0 border-t border-border bg-surface ${timelineOpen ? "h-[162px]" : ""}`}>
+      <div className={`shrink-0 border-t border-border bg-surface ${timelineOpen ? `h-[${timelineHeight}px]` : ""}`}>
         {!timelineOpen ? (
           <button
             type="button"
@@ -708,6 +880,19 @@ export function MotionEditor() {
           }
           onDeleteKeyframe={(layerId, keyframeId) => dispatch({ type: "DELETE_KEYFRAME", layerId, keyframeId })}
           onTogglePlay={playback.toggle}
+          onRetimeLayer={(layerId, deltaMs) => dispatch({ type: "RETIME_LAYER", layerId, deltaMs })}
+          onTrimLayer={(layerId, startMs, endMs) => {
+            // When ripple is on and the end handle is dragged, use
+            // RIPPLE_TRIM to shift everything after. The start handle
+            // always uses TRIM_LAYER regardless of ripple mode.
+            if (rippleMode && endMs !== null) {
+              dispatch({ type: "RIPPLE_TRIM", layerId, endMs });
+            } else {
+              dispatch({ type: "TRIM_LAYER", layerId, startMs, endMs });
+            }
+          }}
+          rippleMode={rippleMode}
+          onToggleRipple={() => setRippleMode((r) => !r)}
           onAddSceneMarker={(timeMs) => dispatch({ type: "ADD_SCENE_MARKER", timeMs: Math.round(timeMs) })}
           onUpdateSceneMarker={(markerId, patch) => dispatch({ type: "UPDATE_SCENE_MARKER", markerId, patch })}
           onDeleteSceneMarker={(markerId) => dispatch({ type: "DELETE_SCENE_MARKER", markerId })}
@@ -724,6 +909,17 @@ export function MotionEditor() {
         />
         )}
       </div>
+
+      {/* Timeline / History resize handle (only when timeline open) */}
+      {timelineOpen && (
+        <div
+          onMouseDown={handleTimelineMouseDown}
+          className="h-1 cursor-row-resize bg-transparent hover:bg-accent/20 active:bg-accent/40 transition-colors flex items-center justify-center"
+          title="Drag to resize timeline"
+        >
+          <div className="w-full h-px bg-border/50" />
+        </div>
+      )}
 
       {/* ── History scrubber ── */}
       <HistoryPanel
