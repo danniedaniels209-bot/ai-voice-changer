@@ -711,7 +711,15 @@ export function MotionEditor() {
           onAddSceneMarker={(timeMs) => dispatch({ type: "ADD_SCENE_MARKER", timeMs: Math.round(timeMs) })}
           onUpdateSceneMarker={(markerId, patch) => dispatch({ type: "UPDATE_SCENE_MARKER", markerId, patch })}
           onDeleteSceneMarker={(markerId) => dispatch({ type: "DELETE_SCENE_MARKER", markerId })}
-          onSelectKeyframe={(layerId, keyframeId) => setSelectedKeyframe({ layerId, keyframeId })}
+          onSelectKeyframe={(layerId, keyframeId) => {
+            // Selecting a keyframe also selects its layer. The Inspector only
+            // renders when a layer is selected, so without this, clicking a
+            // keyframe on an unselected layer does nothing visible — the
+            // easing panel silently fails to appear and the user has no way
+            // to know they were supposed to select the layer first.
+            setSelectedKeyframe({ layerId, keyframeId });
+            dispatch({ type: "SELECT_LAYERS", ids: [layerId] });
+          }}
           onCollapse={() => { setTimelineOpen(false); localStorage.setItem("motion_timeline_open", "0"); }}
         />
         )}
