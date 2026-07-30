@@ -76,3 +76,33 @@ export function getDescendants(layerId: string, layers: MotionLayer[]): string[]
   }
   return result;
 }
+
+/**
+ * Shift a layer's position by (dx, dy), moving BOTH its base transform and
+ * any keyframed x/y values.
+ *
+ * This exists because offsetting only `transform.x/y` is silently a no-op on
+ * an animated layer: keyframe evaluation ignores the base transform entirely
+ * for a property that has keyframes, so the layer renders exactly where it
+ * did before. Duplicate and paste both relied on that offset to make the copy
+ * visibly distinct from the original, and on any animated layer both actions
+ * looked like they had done nothing at all.
+ *
+ * That is the same root cause that separately broke multi-drag, multi-resize
+ * and multi-nudge — five instances of one confusable API. `layer.transform`
+ * reads naturally as "where the layer is", but it is only that for layers
+ * with no keyframes. Rather than a sixth site remembering to special-case it,
+ * "move a layer by this much" now has one named function that is correct for
+ * both kinds of layer.
+ */
+export function offsetLayerPosition(layer: MotionLayer, dx: number, dy: number): MotionLayer {
+  return {
+    ...layer,
+    transform: { ...layer.transform, x: layer.transform.x + dx, y: layer.transform.y + dy },
+    keyframes: layer.keyframes.map((k) =>
+      k.property === "x" ? { ...k, value: k.value + dx }
+      : k.property === "y" ? { ...k, value: k.value + dy }
+      : k,
+    ),
+  };
+}

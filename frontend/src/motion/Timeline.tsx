@@ -8,10 +8,12 @@
  */
 
 import { useRef, useState, useCallback } from "react";
-import { Play, Pause, SkipBack, SkipForward, ZoomIn, ZoomOut, ChevronDown, Link, Link2Off } from "lucide-react";
-import type { MotionScene, AudioTrack, SceneMarker } from "../types/motion";
+import { Play, Pause, SkipBack, SkipForward, ZoomIn, ZoomOut, ChevronDown, Link, Link2Off, Activity } from "lucide-react";
+import type { MotionScene, AudioTrack, SceneMarker, Keyframe } from "../types/motion";
 import { Waveform } from "./audio/WaveformCanvas";
 import { findSnap } from "./timeline/snapping";
+import { scrubAudioAt } from "./audio/scrubAudio";
+import { GraphEditor } from "./charts/GraphEditor";
 
 interface TimelineProps {
   /** Optional — collapse the timeline to a header bar. Optional so the
@@ -25,6 +27,7 @@ interface TimelineProps {
   onScrub: (ms: number) => void;
   onSelectLayer: (id: string) => void;
   onMoveKeyframe: (layerId: string, keyframeId: string, timeMs: number) => void;
+  onUpdateKeyframe?: (layerId: string, keyframeId: string, patch: Partial<Keyframe>) => void;
   onDeleteKeyframe: (layerId: string, keyframeId: string) => void;
   onTogglePlay: () => void;
   /** LT-RIPPLE — when true, delete/end-trim ripple everything after. */
@@ -75,6 +78,7 @@ export function Timeline({
   onSelectLayer,
   onMoveKeyframe,
   onDeleteKeyframe,
+  onUpdateKeyframe,
   onTogglePlay,
   onRetimeLayer,
   onTrimLayer,
@@ -95,6 +99,7 @@ export function Timeline({
   const barDrag = useRef<BarDrag | null>(null);
   const [barPreview, setBarPreview] = useState<{ start: number; end: number } | null>(null);
   const [snapLineMs, setSnapLineMs] = useState<number | null>(null);
+  const [graphMode, setGraphMode] = useState(false);
 
   function msToPx(ms: number): number {
     return (ms / 1000) * pxPerSec;
@@ -112,7 +117,19 @@ export function Timeline({
     // the ruler as a way around them.
     if (isEmpty) return;
     const rect = trackRef.current!.getBoundingClientRect();
-    onScrub(Math.max(0, pxToMs(e.clientX - rect.left)));
+    const ms = Math.max(0, pxToMs(e.clientX - rect.left));
+    onScrub(ms);
+    // LT-AUDIOSCRUB — play a short grain of the active track at the new
+    // position so the playhead can be placed by ear. scrubAudioAt is
+    // internally rate-limited and stops its previous grain, so calling it
+    // on every scrub event is safe and needs no throttling here.
+    //
+    // Offset is into the TRACK, not the scene: a track placed at
+    // start_time_ms=2000 is at its own 0s when the playhead reads 2000.
+    if (activeAudioTrack?.source_url) {
+      const trackMs = ms - (activeAudioTrack.start_time_ms ?? 0);
+      if (trackMs >= 0) scrubAudioAt(activeAudioTrack.source_url, trackMs / 1000);
+    }
   }
 
   function handleKeyframeMouseDown(e: React.MouseEvent, layerId: string, keyframeId: string) {
@@ -298,6 +315,14 @@ export function Timeline({
             {rippleMode ? <Link size={14} /> : <Link2Off size={14} />}
           </button>
         )}
+        <button
+          type="button"
+          onClick={() => setGraphMode(m => !m)}
+          title={graphMode ? "Exit Graph Editor" : "Graph Editor (View Animation Curves)"}
+          className={`p-1 rounded hover:bg-surface-hover ${graphMode ? "text-accent" : "text-text-muted hover:text-text"}`}
+        >
+          <Activity size={14} />
+        </button>
         {onCollapse && (
           <button
             type="button"
@@ -427,119 +452,136 @@ export function Timeline({
               </div>
             )}
             
-            {scene.layers.map((layer) => {
-              const selected = selectedLayerIds.includes(layer.id);
-              // LT-TIMELINE: per-layer scene-time visibility window. null
-              // ends mean "use scene default" — materialized for rendering
-              // only; the layer's own fields are untouched until a drag
-              // commits a new value.
-              const barStart = layer.visible_start_ms ?? 0;
-              const barEnd = layer.visible_end_ms ?? scene.duration_ms;
-              const dragging = barDrag.current?.layerId === layer.id && barPreview !== null;
-              const renderStart = dragging ? barPreview!.start : barStart;
-              const renderEnd = dragging ? barPreview!.end : barEnd;
-              const barLeftPx = msToPx(renderStart);
-              const barWidthPx = Math.max(
-                HANDLE_WIDTH_PX * 2,
-                msToPx(renderEnd) - msToPx(renderStart),
-              );
-              const draggable = !!(onRetimeLayer || onTrimLayer);
-              return (
-                <div
-                  key={layer.id}
-                  onClick={() => onSelectLayer(layer.id)}
-                  className={`relative border-b border-border/50 cursor-pointer ${
-                    selected ? "bg-accent-dim/30" : "hover:bg-surface-hover/50"
-                  }`}
-                  style={{ height: ROW_HEIGHT }}
-                >
-                  <span className="absolute left-1 top-1/2 -translate-y-1/2 text-[11px] text-text-muted truncate max-w-[140px] pointer-events-none z-10">
-                    {layer.name}
-                  </span>
-
-                  {/* Per-layer time bar. Sits behind the keyframes (no z)
-                      so diamonds remain visible/interactive on top. Body
-                      drag moves both ends; left/right handles trim. */}
-                  {draggable && (
-                    <div
-                      className={`absolute top-1/2 -translate-y-1/2 h-4 rounded-sm ${
-                        selected ? "bg-accent/40" : "bg-text-faint/25"
-                      } group`}
-                      style={{ left: barLeftPx, width: barWidthPx }}
-                      onMouseDown={(e) =>
-                        handleBarMouseDown(e, { start: barStart, end: barEnd }, "body", layer.id)
-                      }
-                    >
-                      {/* Left (start) handle */}
-                      <div
-                        className="absolute top-0 bottom-0 left-0 w-1.5 bg-accent/70 rounded-l-sm cursor-ew-resize opacity-0 group-hover:opacity-100"
-                        onMouseDown={(e) =>
-                          handleBarMouseDown(e, { start: barStart, end: barEnd }, "start", layer.id)
-                        }
-                        title={`Start @ ${(renderStart / 1000).toFixed(2)}s`}
-                      />
-                      {/* Right (end) handle */}
-                      <div
-                        className="absolute top-0 bottom-0 right-0 w-1.5 bg-accent/70 rounded-r-sm cursor-ew-resize opacity-0 group-hover:opacity-100"
-                        onMouseDown={(e) =>
-                          handleBarMouseDown(e, { start: barStart, end: barEnd }, "end", layer.id)
-                        }
-                        title={`End @ ${(renderEnd / 1000).toFixed(2)}s`}
-                      />
-                    </div>
-                  )}
-
-                  {layer.keyframes.map((kf) => {
-                    const kfDragging = dragKeyframe.current?.keyframeId === kf.id;
-                    const ms = kfDragging && dragPreviewMs !== null ? dragPreviewMs : kf.time_ms;
-                    // Dim keyframes that fall outside the layer's visible
-                    // window — they're rendered inactive (the layer isn't
-                    // drawn there) but remain editable.
-                    const inRange = ms >= renderStart && ms < renderEnd;
-                    return (
-                      <div
-                        key={kf.id}
-                        title={`${kf.property} = ${kf.value} @ ${(ms / 1000).toFixed(2)}s (${kf.easing})`}
-                        onMouseDown={(e) => handleKeyframeMouseDown(e, layer.id, kf.id)}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onSelectKeyframe?.(layer.id, kf.id);
-                        }}
-                        onDoubleClick={(e) => {
-                          e.stopPropagation();
-                          onDeleteKeyframe(layer.id, kf.id);
-                        }}
-                        className={`absolute top-1/2 w-2.5 h-2.5 -mt-[5px] -ml-[5px] bg-accent rotate-45 border border-white/40 cursor-ew-resize z-10 ${
-                          inRange ? "" : "opacity-30"
-                        }`}
-                        style={{ left: msToPx(ms) }}
-                      >
-                        {/* LT-KEYFRAMEUI — small easing indicator dot. Color-coded by
-                            easing family so a user scanning the track can tell linear
-                            from bounce/elastic/spring at a glance. */}
-                        <div
-                          className="absolute inset-0 flex items-center justify-center pointer-events-none"
-                          style={{ transform: "rotate(-45deg)" }}
-                        >
-                          <span
-                            className={`w-1 h-1 rounded-full ${
-                              kf.easing === "linear" ? "bg-white/60" :
-                              kf.easing.startsWith("ease") ? "bg-blue-400" :
-                              kf.easing === "bounce" ? "bg-yellow-400" :
-                              kf.easing === "elastic" ? "bg-pink-400" :
-                              kf.easing === "spring" ? "bg-green-400" :
-                              kf.easing === "overshoot" ? "bg-orange-400" :
-                              "bg-white/40"
-                            }`}
-                          />
-                        </div>
-                      </div>
-                    );
-                  })}
+            
+            {graphMode ? (
+              selectedLayerIds.length > 0 ? (
+                <GraphEditor
+                  layer={scene.layers.find(l => l.id === selectedLayerIds[0])!}
+                  pxPerSec={pxPerSec}
+                  durationMs={scene.duration_ms}
+                  onUpdateKeyframe={onUpdateKeyframe || (() => {})}
+                  onSelectKeyframe={onSelectKeyframe}
+                />
+              ) : (
+                <div className="text-xs text-text-faint text-center py-6">
+                  Select a layer to view its animation curves.
                 </div>
-              );
-            })}
-            {scene.layers.length === 0 && (
+              )
+            ) : (
+              scene.layers.map((layer) => {
+                const selected = selectedLayerIds.includes(layer.id);
+                // LT-TIMELINE: per-layer scene-time visibility window. null
+                // ends mean "use scene default" — materialized for rendering
+                // only; the layer's own fields are untouched until a drag
+                // commits a new value.
+                const barStart = layer.visible_start_ms ?? 0;
+                const barEnd = layer.visible_end_ms ?? scene.duration_ms;
+                const dragging = barDrag.current?.layerId === layer.id && barPreview !== null;
+                const renderStart = dragging ? barPreview!.start : barStart;
+                const renderEnd = dragging ? barPreview!.end : barEnd;
+                const barLeftPx = msToPx(renderStart);
+                const barWidthPx = Math.max(
+                  HANDLE_WIDTH_PX * 2,
+                  msToPx(renderEnd) - msToPx(renderStart),
+                );
+                const draggable = !!(onRetimeLayer || onTrimLayer);
+                return (
+                  <div
+                    key={layer.id}
+                    onClick={() => onSelectLayer(layer.id)}
+                    className={`relative border-b border-border/50 cursor-pointer ${
+                      selected ? "bg-accent-dim/30" : "hover:bg-surface-hover/50"
+                    }`}
+                    style={{ height: ROW_HEIGHT }}
+                  >
+                    <span className="absolute left-1 top-1/2 -translate-y-1/2 text-[11px] text-text-muted truncate max-w-[140px] pointer-events-none z-10">
+                      {layer.name}
+                    </span>
+
+                    {/* Per-layer time bar. Sits behind the keyframes (no z)
+                        so diamonds remain visible/interactive on top. Body
+                        drag moves both ends; left/right handles trim. */}
+                    {draggable && (
+                      <div
+                        className={`absolute top-1/2 -translate-y-1/2 h-4 rounded-sm ${
+                          selected ? "bg-accent/40" : "bg-text-faint/25"
+                        } group`}
+                        style={{ left: barLeftPx, width: barWidthPx }}
+                        onMouseDown={(e) =>
+                          handleBarMouseDown(e, { start: barStart, end: barEnd }, "body", layer.id)
+                        }
+                      >
+                        {/* Left (start) handle */}
+                        <div
+                          className="absolute top-0 bottom-0 left-0 w-1.5 bg-accent/70 rounded-l-sm cursor-ew-resize opacity-0 group-hover:opacity-100"
+                          onMouseDown={(e) =>
+                            handleBarMouseDown(e, { start: barStart, end: barEnd }, "start", layer.id)
+                          }
+                          title={`Start @ ${(renderStart / 1000).toFixed(2)}s`}
+                        />
+                        {/* Right (end) handle */}
+                        <div
+                          className="absolute top-0 bottom-0 right-0 w-1.5 bg-accent/70 rounded-r-sm cursor-ew-resize opacity-0 group-hover:opacity-100"
+                          onMouseDown={(e) =>
+                            handleBarMouseDown(e, { start: barStart, end: barEnd }, "end", layer.id)
+                          }
+                          title={`End @ ${(renderEnd / 1000).toFixed(2)}s`}
+                        />
+                      </div>
+                    )}
+
+                    {layer.keyframes.map((kf) => {
+                      const kfDragging = dragKeyframe.current?.keyframeId === kf.id;
+                      const ms = kfDragging && dragPreviewMs !== null ? dragPreviewMs : kf.time_ms;
+                      // Dim keyframes that fall outside the layer's visible
+                      // window — they're rendered inactive (the layer isn't
+                      // drawn there) but remain editable.
+                      const inRange = ms >= renderStart && ms < renderEnd;
+                      return (
+                        <div
+                          key={kf.id}
+                          title={`${kf.property} = ${kf.value} @ ${(ms / 1000).toFixed(2)}s (${kf.easing})`}
+                          onMouseDown={(e) => handleKeyframeMouseDown(e, layer.id, kf.id)}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onSelectKeyframe?.(layer.id, kf.id);
+                          }}
+                          onDoubleClick={(e) => {
+                            e.stopPropagation();
+                            onDeleteKeyframe(layer.id, kf.id);
+                          }}
+                          className={`absolute top-1/2 w-2.5 h-2.5 -mt-[5px] -ml-[5px] bg-accent rotate-45 border border-white/40 cursor-ew-resize z-10 ${
+                            inRange ? "" : "opacity-30"
+                          }`}
+                          style={{ left: msToPx(ms) }}
+                        >
+                          {/* LT-KEYFRAMEUI — small easing indicator dot. Color-coded by
+                              easing family so a user scanning the track can tell linear
+                              from bounce/elastic/spring at a glance. */}
+                          <div
+                            className="absolute inset-0 flex items-center justify-center pointer-events-none"
+                            style={{ transform: "rotate(-45deg)" }}
+                          >
+                            <span
+                              className={`w-1 h-1 rounded-full ${
+                                kf.easing === "linear" ? "bg-white/60" :
+                                kf.easing.startsWith("ease") ? "bg-blue-400" :
+                                kf.easing === "bounce" ? "bg-yellow-400" :
+                                kf.easing === "elastic" ? "bg-pink-400" :
+                                kf.easing === "spring" ? "bg-green-400" :
+                                kf.easing === "overshoot" ? "bg-orange-400" :
+                                "bg-white/40"
+                              }`}
+                            />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })
+            )}
+            {!graphMode && scene.layers.length === 0 && (
               <p className="text-xs text-text-faint text-center py-3">
                 Add a layer, then use the Inspector's keyframe buttons to animate it.
               </p>

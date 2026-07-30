@@ -67,7 +67,8 @@ class TextLayerProps(BaseModel):
     letter_spacing: float = 0.0
     line_height: float = 1.25  # matches textWrap.ts LINE_HEIGHT_FACTOR
     stroke_color: str = "#000000"
-    stroke_width: float = 0.0
+    path_type: Literal["none", "arc-up", "arc-down", "wave", "circle", "custom"] = "none"
+    path_d: str | None = None
 
 
 class ImageLayerProps(BaseModel):

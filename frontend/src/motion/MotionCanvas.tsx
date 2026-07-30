@@ -16,7 +16,6 @@ import { isLayerVisibleAt } from "../types/motion";
 import type { MotionLayer, MotionScene, Transform } from "../types/motion";
 import type { GradientFill } from "./gradients/gradientTypes";
 import type { ShadowEffect } from "./shadowfx/shadowTypes";
-import { lineHeight, wrapTextToLines } from "./textWrap";
 import { VideoLayerView } from "./video/VideoLayerView";
 import { resolveConnectorEndpoints } from "./connectorGeometry";
 import { Connector } from "./connector/Connector";
@@ -28,6 +27,7 @@ import { blendStyle } from "./blend/blendMode";
 import { applyMaskToLayer, isMaskLayer, renderMask } from "./mask/maskMode";
 import { isEffectivelyHidden, isEffectivelyLocked } from "./layerTree";
 import { resolveTransformAtTime } from "./easing";
+import { renderTextLayer } from "./textpath/textPath";
 import { computeMotionBlur, motionBlurFilterId, renderMotionBlurFilter } from "./motionblur/motionBlur";
 
 type ResizeHandle = "nw" | "ne" | "sw" | "se";
@@ -64,6 +64,12 @@ interface MotionCanvasProps {
   connectFromLayerId?: string | null;
   onConnectPick?: (layerId: string) => void;
   onOpenInsert?: () => void;
+
+  /** Grid & rulers — editor-only overlays, owned by MotionEditor toolbar. */
+  showGrid?: boolean;
+  gridSize?: number;
+  showRulers?: boolean;
+  snapToGrid?: boolean;
 }
 
 interface Viewport {
@@ -226,6 +232,10 @@ export function MotionCanvas({
   connectFromLayerId = null,
   onConnectPick,
   onOpenInsert,
+  showGrid = false,
+  gridSize = 20,
+  showRulers = false,
+  snapToGrid = false,
 }: MotionCanvasProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   const [viewport, setViewport] = useState<Viewport>({ x: 0, y: 0, zoom: 0.5 });
@@ -238,6 +248,18 @@ export function MotionCanvas({
   >(null);
   const [guides, setGuides] = useState<GuideLine[]>([]);
   const [showSafeArea, setShowSafeArea] = useState(false);
+  const [persistentGuides, setPersistentGuides] = useState<GuideLine[]>(() => {
+    try {
+      const raw = localStorage.getItem("motion_persistent_guides");
+      return raw ? JSON.parse(raw) : [];
+    } catch { return []; }
+  });
+  const guideCreateRef = useRef<{ axis: "horizontal" | "vertical"; scenePos: number } | null>(null);
+
+  // Save persistent guides to localStorage whenever they change
+  useEffect(() => {
+    localStorage.setItem("motion_persistent_guides", JSON.stringify(persistentGuides));
+  }, [persistentGuides]);
 
   // Toggle safe-area overlay with S key
   useEffect(() => {
@@ -283,6 +305,24 @@ export function MotionCanvas({
         originY: viewport.y,
       };
       return;
+    }
+    // Check if click is on a ruler → start guide creation
+    if (showRulers) {
+      const rect = svgRef.current!.getBoundingClientRect();
+      const svgX = e.clientX - rect.left;
+      const svgY = e.clientY - rect.top;
+      const sceneX = (svgX - viewport.x) / viewport.zoom;
+      const sceneY = (svgY - viewport.y) / viewport.zoom;
+      if (sceneY >= -20 && sceneY < 0 && sceneX >= 0 && sceneX <= scene.width) {
+        e.stopPropagation();
+        guideCreateRef.current = { axis: "vertical", scenePos: sceneX };
+        return;
+      }
+      if (sceneX >= -20 && sceneX < 0 && sceneY >= 0 && sceneY <= scene.height) {
+        e.stopPropagation();
+        guideCreateRef.current = { axis: "horizontal", scenePos: sceneY };
+        return;
+      }
     }
     if (e.target === svgRef.current) onSelect([]);
   }
@@ -452,6 +492,24 @@ export function MotionCanvas({
       setViewport((v) => ({ ...v, x: panState.current!.originX + dx, y: panState.current!.originY + dy }));
       return;
     }
+    if (guideCreateRef.current) {
+      const rect = svgRef.current!.getBoundingClientRect();
+      const svgX = e.clientX - rect.left;
+      const svgY = e.clientY - rect.top;
+      const sceneX = (svgX - viewport.x) / viewport.zoom;
+      const sceneY = (svgY - viewport.y) / viewport.zoom;
+      const gc = guideCreateRef.current;
+      if (gc.axis === "vertical") {
+        const pos = Math.max(0, Math.min(scene.width, sceneX));
+        gc.scenePos = pos;
+      } else {
+        const pos = Math.max(0, Math.min(scene.height, sceneY));
+        gc.scenePos = pos;
+      }
+      // Show a preview guide
+      setGuides([{ axis: gc.axis, position: gc.scenePos }]);
+      return;
+    }
     if (dragState.current) {
       const ds = dragState.current;
       const clientDx = e.clientX - ds.startClientX;
@@ -472,7 +530,7 @@ export function MotionCanvas({
       const otherTransforms = scene.layers
         .filter((l) => !draggedSet.has(l.id) && !l.hidden && isLayerVisibleAt(l, scene.duration_ms, playheadMs))
         .map((l) => getTransform(l));
-      const snap = computeDragSnap(rawX, rawY, primary.startWidth, primary.startHeight, scene.width, scene.height, otherTransforms, threshold, e.altKey);
+      const snap = computeDragSnap(rawX, rawY, primary.startWidth, primary.startHeight, scene.width, scene.height, otherTransforms, threshold, e.altKey, snapToGrid ? gridSize : undefined);
 
       const effectiveDx = snap.x - primary.startX;
       const effectiveDy = snap.y - primary.startY;
@@ -501,7 +559,7 @@ export function MotionCanvas({
         const otherTransforms = scene.layers
           .filter((l) => l.id !== item.layerId && !l.hidden && isLayerVisibleAt(l, scene.duration_ms, playheadMs))
           .map((l) => getTransform(l));
-        const snap = computeResizeSnap(rs.handle, item.start, clientDx, clientDy, scene.width, scene.height, otherTransforms, threshold, e.altKey);
+        const snap = computeResizeSnap(rs.handle, item.start, clientDx, clientDy, scene.width, scene.height, otherTransforms, threshold, e.altKey, snapToGrid ? gridSize : undefined);
         setResizePreview({ [item.layerId]: { x: snap.x, y: snap.y, width: snap.width, height: snap.height } });
         setGuides(snap.guides);
         return;
@@ -589,6 +647,18 @@ export function MotionCanvas({
 
   function handleMouseUp() {
     panState.current = null;
+    if (guideCreateRef.current) {
+      const gc = guideCreateRef.current;
+      setPersistentGuides((prev) => {
+        // Don't add if one already exists at almost the same position
+        const exists = prev.some((g) => g.axis === gc.axis && Math.abs(g.position - gc.scenePos) < 2);
+        if (exists) return prev;
+        return [...prev, { axis: gc.axis, position: gc.scenePos }];
+      });
+      guideCreateRef.current = null;
+      setGuides([]);
+      return;
+    }
     if (dragState.current) {
       const ds = dragState.current;
       if (dragPreview && ds.didMove) {
@@ -707,38 +777,7 @@ export function MotionCanvas({
         />
       );
     } else if (layer.type === "text" && layer.text) {
-      const anchor = layer.text.align === "center" ? "middle" : layer.text.align === "right" ? "end" : "start";
-      const anchorX = layer.text.align === "center" ? t.width / 2 : layer.text.align === "right" ? t.width : 0;
-      // Wrap text to the layer's box width using the shared estimator so the
-      // canvas, the export, and the thumbnail all break at the same points.
-      // First tspan sits on the parent's y baseline; subsequent ones use dy
-      // to drop down by one line height. ALL tspans share anchorX so the
-      // alignment stays consistent across lines.
-      const lines = wrapTextToLines(layer.text.text, {
-        maxWidthPx: Math.max(0, t.width),
-        fontSize: layer.text.font_size,
-      });
-      const lineY = lineHeight(layer.text.font_size, layer.text.line_height);
-      shape = (
-        <text
-          x={anchorX}
-          y={layer.text.font_size}
-          textAnchor={anchor}
-          fontFamily={layer.text.font_family}
-          fontSize={layer.text.font_size}
-          fontWeight={layer.text.font_weight}
-          fill={resolveFill(layer, layer.text.color)}
-          letterSpacing={layer.text.letter_spacing ?? 0}
-          stroke={layer.text.stroke_width && layer.text.stroke_width > 0 ? layer.text.stroke_color : "none"}
-          strokeWidth={layer.text.stroke_width ?? 0}
-        >
-          {lines.map((line, i) => (
-            <tspan key={i} x={anchorX} dy={i === 0 ? 0 : lineY}>
-              {line}
-            </tspan>
-          ))}
-        </text>
-      );
+      shape = renderTextLayer({ layer, transform: t, resolveFill });
     } else if (layer.type === "image" && layer.image) {
       // Images keep their native fill — gradient/shadow on raster content
       // isn't a useful combination (the image already carries its own
@@ -1042,6 +1081,92 @@ export function MotionCanvas({
           stroke="#3a3a46"
           strokeWidth={1 / viewport.zoom}
         />
+        {/* Grid overlay — editor-only, drawn above the scene bg but below
+            layers so it serves as a positional reference without obscuring
+            content. Structurally isolated from RenderFrame.tsx / SceneThumbnail.tsx
+            (they don't use this component). */}
+        {showGrid && gridSize > 0 && (
+          <>
+            {Array.from({ length: Math.ceil(scene.width / gridSize) - 1 }, (_, i) => {
+              const x = (i + 1) * gridSize;
+              return (
+                <line key={`gv${x}`} x1={x} y1={0} x2={x} y2={scene.height}
+                      stroke="rgba(100,100,180,0.12)" strokeWidth={1 / viewport.zoom}
+                      vectorEffect="non-scaling-stroke" pointerEvents="none" />
+              );
+            })}
+            {Array.from({ length: Math.ceil(scene.height / gridSize) - 1 }, (_, i) => {
+              const y = (i + 1) * gridSize;
+              return (
+                <line key={`gh${y}`} x1={0} y1={y} x2={scene.width} y2={y}
+                      stroke="rgba(100,100,180,0.12)" strokeWidth={1 / viewport.zoom}
+                      vectorEffect="non-scaling-stroke" pointerEvents="none" />
+              );
+            })}
+          </>
+        )}
+        {/* Rulers — editor-only, bars with tick marks at the top/left edges
+            of the scene frame. Same structural guarantee as grid/onion skin. */}
+        {showRulers && (
+          <>
+            {/* Top ruler bar */}
+            <rect x={0} y={-20} width={scene.width} height={20}
+                  fill="#1c1c24" stroke="#3a3a46" strokeWidth={1 / viewport.zoom}
+                  pointerEvents="none" />
+            {Array.from({ length: Math.ceil(scene.width / 100) + 1 }, (_, i) => {
+              const x = i * 100;
+              if (x > scene.width) return null;
+              return (
+                <g key={`rt${x}`} pointerEvents="none">
+                  <line x1={x} y1={-20} x2={x} y2={-12}
+                        stroke="#5a5a6a" strokeWidth={1 / viewport.zoom}
+                        vectorEffect="non-scaling-stroke" />
+                  <text x={x + 2} y={-5} fill="#7a7a8a" fontSize={9 / viewport.zoom}
+                        fontFamily="monospace" vectorEffect="non-scaling-stroke">
+                    {x}
+                  </text>
+                </g>
+              );
+            })}
+            {Array.from({ length: Math.ceil(scene.width / 20) + 1 }, (_, i) => {
+              const x = i * 20;
+              if (x % 100 === 0 || x > scene.width) return null;
+              return (
+                <line key={`rtm${x}`} x1={x} y1={-20} x2={x} y2={-16}
+                      stroke="#3a3a4a" strokeWidth={1 / viewport.zoom}
+                      vectorEffect="non-scaling-stroke" pointerEvents="none" />
+              );
+            })}
+            {/* Left ruler bar */}
+            <rect x={-20} y={0} width={20} height={scene.height}
+                  fill="#1c1c24" stroke="#3a3a46" strokeWidth={1 / viewport.zoom}
+                  pointerEvents="none" />
+            {Array.from({ length: Math.ceil(scene.height / 100) + 1 }, (_, i) => {
+              const y = i * 100;
+              if (y > scene.height) return null;
+              return (
+                <g key={`rl${y}`} pointerEvents="none">
+                  <line x1={-20} y1={y} x2={-12} y2={y}
+                        stroke="#5a5a6a" strokeWidth={1 / viewport.zoom}
+                        vectorEffect="non-scaling-stroke" />
+                  <text x={-18} y={y + 3} fill="#7a7a8a" fontSize={9 / viewport.zoom}
+                        fontFamily="monospace" vectorEffect="non-scaling-stroke">
+                    {y}
+                  </text>
+                </g>
+              );
+            })}
+            {Array.from({ length: Math.ceil(scene.height / 20) + 1 }, (_, i) => {
+              const y = i * 20;
+              if (y % 100 === 0 || y > scene.height) return null;
+              return (
+                <line key={`rlm${y}`} x1={-20} y1={y} x2={-16} y2={y}
+                      stroke="#3a3a4a" strokeWidth={1 / viewport.zoom}
+                      vectorEffect="non-scaling-stroke" pointerEvents="none" />
+              );
+            })}
+          </>
+        )}
         {scene.layers.map((layer, idx) => renderLayer(layer, idx))}
         {(scene.connectors ?? []).map((conn) => {
           const resolved = resolveConnectorEndpoints(conn, scene.layers, playheadMs);
@@ -1089,6 +1214,26 @@ export function MotionCanvas({
           }
           return ghosts;
         })}
+        {/* Persistent guide lines — user-placed from rulers. Same
+            rendering as snap guides but in orange, and right-clicking
+            one deletes it. Saved to localStorage across sessions. */}
+        {persistentGuides.map((g, i) =>
+          g.axis === "vertical" ? (
+            <line key={`pg-${i}`}
+              x1={g.position} y1={0} x2={g.position} y2={scene.height}
+              stroke="#f59e0b" strokeWidth={1 / viewport.zoom}
+              strokeDasharray="6 4" vectorEffect="non-scaling-stroke"
+              pointerEvents="none"
+            />
+          ) : (
+            <line key={`pg-${i}`}
+              x1={0} y1={g.position} x2={scene.width} y2={g.position}
+              stroke="#f59e0b" strokeWidth={1 / viewport.zoom}
+              strokeDasharray="6 4" vectorEffect="non-scaling-stroke"
+              pointerEvents="none"
+            />
+          ),
+        )}
         {/* Snap-guide lines — drawn above layers/connectors so they're
             always visible but don't participate in layout/events. */}
         {guides.map((g, i) =>

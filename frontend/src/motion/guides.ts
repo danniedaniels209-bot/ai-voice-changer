@@ -19,19 +19,29 @@ export interface ResizeSnapResult {
   guides: GuideLine[];
 }
 
-/** Build X and Y snap targets from scene edges/centre and other layers'
- *  bounding-box edges/centres. Omits the currently dragged/resized layer
- *  (the caller passes `otherTransforms` which excludes it). */
+/** Build X and Y snap targets from scene edges/centre, other layers'
+ *  bounding-box edges/centres, and (optionally) grid lines. Omits the
+ *  currently dragged/resized layer (the caller passes `otherTransforms`
+ *  which excludes it). */
 function buildSnapTargets(
   sceneW: number,
   sceneH: number,
   otherTransforms: { x: number; y: number; width: number; height: number }[],
+  gridSize?: number,
 ): { xTargets: number[]; yTargets: number[] } {
   const xTargets = [0, sceneW / 2, sceneW];
   const yTargets = [0, sceneH / 2, sceneH];
   for (const t of otherTransforms) {
     xTargets.push(t.x, t.x + t.width / 2, t.x + t.width);
     yTargets.push(t.y, t.y + t.height / 2, t.y + t.height);
+  }
+  if (gridSize && gridSize > 0) {
+    for (let x = gridSize; x < sceneW; x += gridSize) {
+      xTargets.push(x);
+    }
+    for (let y = gridSize; y < sceneH; y += gridSize) {
+      yTargets.push(y);
+    }
   }
   return { xTargets, yTargets };
 }
@@ -78,10 +88,11 @@ export function computeDragSnap(
   otherTransforms: { x: number; y: number; width: number; height: number }[],
   threshold: number,
   suppress: boolean,
+  gridSize?: number,
 ): DragSnapResult {
   if (suppress) return { x, y, guides: [] };
 
-  const { xTargets, yTargets } = buildSnapTargets(sceneW, sceneH, otherTransforms);
+  const { xTargets, yTargets } = buildSnapTargets(sceneW, sceneH, otherTransforms, gridSize);
   const guides: GuideLine[] = [];
 
   const xSnap = snapValue(x, [x, x + w / 2, x + w], xTargets, threshold);
@@ -110,6 +121,7 @@ export function computeResizeSnap(
   otherTransforms: { x: number; y: number; width: number; height: number }[],
   threshold: number,
   suppress: boolean,
+  gridSize?: number,
 ): ResizeSnapResult {
   const MIN = 8;
   if (suppress) {
@@ -123,7 +135,7 @@ export function computeResizeSnap(
     };
   }
 
-  const { xTargets, yTargets } = buildSnapTargets(sceneW, sceneH, otherTransforms);
+  const { xTargets, yTargets } = buildSnapTargets(sceneW, sceneH, otherTransforms, gridSize);
   const guides: GuideLine[] = [];
 
   // Which edges are anchored (don't move)?

@@ -3,7 +3,6 @@ import { isLayerVisibleAt } from "../../types/motion";
 import type { MotionLayer, MotionScene, Transform } from "../../types/motion";
 import type { GradientFill } from "../gradients/gradientTypes";
 import type { ShadowEffect } from "../shadowfx/shadowTypes";
-import { lineHeight, wrapTextToLines } from "../textWrap";
 import { isEffectivelyHidden } from "../layerTree";
 import { resolveConnectorEndpoints } from "../connectorGeometry";
 import { Connector } from "../connector/Connector";
@@ -12,6 +11,7 @@ import { colorGradeFilterId, isIdentityColorGrade, renderColorGradeFilter } from
 import { blendStyle } from "../blend/blendMode";
 import { applyMaskToLayer, isMaskLayer, renderMask } from "../mask/maskMode";
 import { computeMotionBlur, motionBlurFilterId, renderMotionBlurFilter } from "../motionblur/motionBlur";
+import { renderTextLayer } from "../textpath/textPath";
 
 export interface SceneThumbnailProps {
   scene: MotionScene;
@@ -157,38 +157,8 @@ function renderLayer(
       />
     );
   } else if (layer.type === "text" && layer.text) {
-    const anchor =
-      layer.text.align === "center" ? "middle" : layer.text.align === "right" ? "end" : "start";
-    const anchorX =
-      layer.text.align === "center" ? t.width / 2 : layer.text.align === "right" ? t.width : 0;
-    // Same wrap helper used by MotionCanvas.tsx and RenderFrame.tsx —
-    // deterministic so thumbnail matches what the editor and export show.
-    const lines = wrapTextToLines(layer.text.text, {
-      maxWidthPx: Math.max(0, t.width),
-      fontSize: layer.text.font_size,
-    });
-    const lineY = lineHeight(layer.text.font_size, layer.text.line_height);
-    shape = (
-      <text
-        x={anchorX}
-        y={layer.text.font_size}
-        textAnchor={anchor}
-        fontFamily={layer.text.font_family}
-        fontSize={layer.text.font_size}
-        fontWeight={layer.text.font_weight}
-        fill={resolveFill(layer, layer.text.color)}
-        letterSpacing={layer.text.letter_spacing ?? 0}
-        stroke={layer.text.stroke_width && layer.text.stroke_width > 0 ? layer.text.stroke_color : "none"}
-        strokeWidth={layer.text.stroke_width ?? 0}
-      >
-        {lines.map((line, i) => (
-          <tspan key={i} x={anchorX} dy={i === 0 ? 0 : lineY}>
-            {line}
-          </tspan>
-        ))}
-      </text>
-    );
-    } else if (layer.type === "image" && layer.image) {
+    shape = renderTextLayer({ layer, transform: t, resolveFill });
+  } else if (layer.type === "image" && layer.image) {
       shape = layer.image.src ? (
         <image
           href={layer.image.src}

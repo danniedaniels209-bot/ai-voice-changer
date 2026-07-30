@@ -21,9 +21,18 @@ import type { MotionLayer } from "../../types/motion";
 
 const TAG_RE = / · cc:([0-9a-f-]{6,})$/i;
 
+/** The literal tag substring for a group id — e.g. " · cc:a1b2c3d4". Every
+ *  layer in that import's `name` contains this exact substring, which is
+ *  what LT-LAYERSEARCH's "show only this group" action searches for. Kept
+ *  here (not re-derived at the call site) so the tag FORMAT has one
+ *  definition — withGroupTag, groupIdOf and this must all agree on it. */
+export function groupTagText(groupId: string): string {
+  return ` · cc:${groupId}`;
+}
+
 /** Append (or replace) the group tag on a label. */
 export function withGroupTag(label: string, groupId: string): string {
-  return `${stripGroupTag(label)} · cc:${groupId}`;
+  return `${stripGroupTag(label)}${groupTagText(groupId)}`;
 }
 
 /** The label with any existing group tag removed — for display, or before

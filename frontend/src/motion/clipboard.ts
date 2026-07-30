@@ -1,6 +1,7 @@
 import type { MotionConnector, MotionLayer, MotionScene } from "../types/motion";
 import { newId } from "./state";
 import { resolveTransformAtTime } from "./easing";
+import { offsetLayerPosition } from "./layerTree";
 
 export interface ClipboardData {
   layers: MotionLayer[];
@@ -45,22 +46,25 @@ export function preparePaste(
     const origStart = l.visible_start_ms ?? 0;
     const origEnd = l.visible_end_ms ?? targetScene.duration_ms;
 
-    return {
-      ...l,
-      id: newLayerId,
-      visible_start_ms: playheadMs + (origStart - origMinStart),
-      visible_end_ms: playheadMs + (origEnd - origMinStart),
-      transform: {
-        ...l.transform,
-        x: l.transform.x + 20,
-        y: l.transform.y + 20,
+    // The +20 offset goes through offsetLayerPosition, which shifts keyframed
+    // x/y values as well as the base transform. Offsetting only the base is a
+    // silent no-op on an animated layer — the pasted copy lands exactly on
+    // top of the original, so the paste looks like it did nothing.
+    return offsetLayerPosition(
+      {
+        ...l,
+        id: newLayerId,
+        visible_start_ms: playheadMs + (origStart - origMinStart),
+        visible_end_ms: playheadMs + (origEnd - origMinStart),
+        keyframes: l.keyframes.map((k) => ({
+          ...k,
+          id: newId(),
+          time_ms: playheadMs + (k.time_ms - origMinStart),
+        })),
       },
-      keyframes: l.keyframes.map((k) => ({
-        ...k,
-        id: newId(),
-        time_ms: playheadMs + (k.time_ms - origMinStart),
-      })),
-    };
+      20,
+      20,
+    );
   });
 
   const pastedConnectors: MotionConnector[] = clipboard.connectors

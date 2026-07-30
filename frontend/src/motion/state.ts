@@ -21,7 +21,7 @@ import type {
   SceneMarker,
 } from "../types/motion";
 import { resolveTransformAtTime } from "./easing";
-import { wouldCreateCycle, getDescendants } from "./layerTree";
+import { wouldCreateCycle, getDescendants, offsetLayerPosition } from "./layerTree";
 
 const MAX_HISTORY = 50;
 
@@ -357,18 +357,20 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
       const source = scene.layers[sourceIndex];
       // Deep-clone with fresh ids — reusing keyframe ids across layers
       // would make the timeline address the wrong keyframe on undo/redo.
-      const copy: MotionLayer = {
-        ...source,
-        id: newId(),
-        name: `${source.name} copy`,
-        keyframes: source.keyframes.map((k) => ({ ...k, id: newId() })),
-        // Offset the copy slightly so it's visibly not the original
-        transform: {
-          ...source.transform,
-          x: source.transform.x + 16,
-          y: source.transform.y + 16,
+      // Offset the copy slightly so it's visibly not the original. Goes
+      // through offsetLayerPosition because shifting only transform.x/y is a
+      // silent no-op on an animated layer — the duplicate would land exactly
+      // on top of the source and the action would look like it did nothing.
+      const copy: MotionLayer = offsetLayerPosition(
+        {
+          ...source,
+          id: newId(),
+          name: `${source.name} copy`,
+          keyframes: source.keyframes.map((k) => ({ ...k, id: newId() })),
         },
-      };
+        16,
+        16,
+      );
       const layers = [...scene.layers];
       layers.splice(sourceIndex + 1, 0, copy);
       const project = withScene(state.project, state.activeSceneId, (s) => ({ ...s, layers }));

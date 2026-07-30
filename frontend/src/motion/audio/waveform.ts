@@ -6,6 +6,13 @@ const decodeCache = new Map<string, Promise<WaveformPeaks>>();
 
 // Create a single AudioContext for decoding (creating too many throws an error)
 let sharedAudioCtx: AudioContext | null = null;
+/** Exported so scrubAudio.ts plays through the SAME context this module
+ *  decodes with. Browsers cap the number of AudioContexts per page and throw
+ *  once you exceed it, so a second module creating its own would work in
+ *  isolation and fail on a project that also renders a waveform. */
+export function getSharedAudioContext(): AudioContext {
+  return getAudioContext();
+}
 function getAudioContext(): AudioContext {
   if (!sharedAudioCtx) {
     sharedAudioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();

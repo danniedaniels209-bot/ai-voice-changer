@@ -124,7 +124,13 @@ export interface TextLayerProps {
   stroke_color?: string;
   /** Outline thickness in px. 0 = no stroke (default). */
   stroke_width?: number;
+  /** LT-TEXTONPATH — SVG path alignment type for curved/arced text. */
+  path_type?: TextPathType;
+  /** Custom SVG path 'd' attribute when path_type is 'custom'. */
+  path_d?: string | null;
 }
+
+export type TextPathType = "none" | "arc-up" | "arc-down" | "wave" | "circle" | "custom";
 
 export interface ImageLayerProps {
   src: string;

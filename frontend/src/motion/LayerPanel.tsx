@@ -1,6 +1,8 @@
 import { useState, useCallback } from "react";
-import { Lock, Unlock, Eye, EyeOff, Square, Circle, Type, Image as ImageIcon, Film, GripVertical, Search, Hexagon as PolygonIcon, Star as StarIcon, Triangle as TriangleIcon, Minus, ArrowRight, Copy, Folder as FolderIcon, FolderOpen, ChevronRight, ChevronDown, Plus } from "lucide-react";
+import { Lock, Unlock, Eye, EyeOff, Square, Circle, Type, Image as ImageIcon, Film, GripVertical, Search, Hexagon as PolygonIcon, Star as StarIcon, Triangle as TriangleIcon, Minus, ArrowRight, Copy, Folder as FolderIcon, FolderOpen, ChevronRight, ChevronDown, Plus, Captions } from "lucide-react";
 import type { LayerType, MotionLayer } from "../types/motion";
+import { visibleLayerIds, type TypeFilter } from "./layerFilter";
+import { groupIdOf, groupTagText } from "./subtitles/subtitleGroup";
 
 interface LayerPanelProps {
   layers: MotionLayer[];
@@ -29,6 +31,21 @@ const ICONS: Record<LayerType, typeof Square> = {
   arrow: ArrowRight,
 };
 
+const TYPE_LABELS: Record<LayerType, string> = {
+  rect: "Rectangle",
+  ellipse: "Ellipse",
+  text: "Text",
+  image: "Image",
+  video: "Video",
+  polygon: "Polygon",
+  star: "Star",
+  triangle: "Triangle",
+  line: "Line",
+  arrow: "Arrow",
+};
+
+const TYPE_FILTER_OPTIONS = Object.keys(TYPE_LABELS) as LayerType[];
+
 export function LayerPanel({
   layers,
   selectedLayerIds,
@@ -45,10 +62,24 @@ export function LayerPanel({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [query, setQuery] = useState("");
+  const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
   const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(new Set());
+
+  // LT-LAYERSEARCH. null = no filter active, render the whole tree exactly
+  // as before. When a filter IS active, a layer renders only if it's a
+  // match, an ancestor of one (so the path down still shows), or a
+  // descendant of one (so matching a folder's name reveals its contents).
+  const visibleIds = visibleLayerIds(layers, query, typeFilter);
+  const filtering = visibleIds !== null;
 
   const renderTree = useCallback(
     (layer: MotionLayer, depth: number): React.ReactNode => {
+      // LT-LAYERSEARCH: while a filter is active, a layer that isn't in
+      // the computed visible set renders nothing at all — not greyed out,
+      // not collapsed, absent. That's what makes "40 captions -> 3 matches"
+      // actually usable instead of just highlighted noise.
+      if (visibleIds && !visibleIds.has(layer.id)) return null;
+
       const Icon = layer.is_folder
         ? collapsedFolders.has(layer.id)
           ? FolderIcon
@@ -56,6 +87,7 @@ export function LayerPanel({
         : ICONS[layer.type];
       const selected = selectedLayerIds.includes(layer.id);
       const hasChildren = layers.some((l) => l.parent_id === layer.id);
+      const groupId = groupIdOf(layer);
 
       return (
         <div key={layer.id}>
@@ -136,6 +168,23 @@ export function LayerPanel({
                 {layer.name}
               </span>
             )}
+            {groupId && (
+              <button
+                type="button"
+                title="Show only this subtitle import's layers"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  // The exact tag substring, not a friendlier label — the
+                  // search matches against the RAW name (see layerFilter.ts),
+                  // so this is the one string guaranteed to match every
+                  // layer from this import and nothing from any other one.
+                  setQuery(groupTagText(groupId));
+                }}
+                className="text-text-faint hover:text-accent shrink-0"
+              >
+                <Captions size={12} />
+              </button>
+            )}
             <button
               type="button"
               title="Duplicate layer"
@@ -170,13 +219,13 @@ export function LayerPanel({
               {layer.locked ? <Lock size={13} /> : <Unlock size={13} />}
             </button>
           </div>
-          {hasChildren && !collapsedFolders.has(layer.id) && (
+          {hasChildren && (filtering || !collapsedFolders.has(layer.id)) && (
             <ChildrenList parentId={layer.id} depth={depth + 1} />
           )}
         </div>
       );
     },
-    [layers, selectedLayerIds, collapsedFolders, editingId, draggingId, onSelect, onRename, onReorder, onDuplicate, onToggleHidden, onToggleLock],
+    [layers, selectedLayerIds, collapsedFolders, editingId, draggingId, visibleIds, filtering, onSelect, onRename, onReorder, onDuplicate, onToggleHidden, onToggleLock],
   );
 
   function ChildrenList({ parentId, depth }: { parentId: string; depth: number }) {
@@ -188,11 +237,12 @@ export function LayerPanel({
     (l) => !l.parent_id || !layers.some((p) => p.id === l.parent_id),
   );
 
-  const q = query.trim().toLowerCase();
-  const orderedLayers = (q
-    ? [...topLevel].reverse().filter((l) => l.name.toLowerCase().includes(q))
-    : [...topLevel].reverse()
-  );
+  // Top-level layers to actually render: while filtering, a top-level
+  // layer only shows if IT (or something under it) is in the visible set
+  // -- `renderTree` handles the recursive part, this just decides which
+  // roots to start from.
+  const visibleTopLevel = visibleIds ? topLevel.filter((l) => visibleIds.has(l.id)) : topLevel;
+  const orderedLayers = [...visibleTopLevel].reverse();
 
   return (
     <div className="flex flex-col h-full">
@@ -226,7 +276,7 @@ export function LayerPanel({
       </div>
 
       {layers.length > 5 && (
-        <div className="px-2 py-1.5 border-b border-border shrink-0">
+        <div className="px-2 py-1.5 border-b border-border shrink-0 space-y-1.5">
           <div className="relative">
             <Search
               size={12}
@@ -241,14 +291,30 @@ export function LayerPanel({
                          text-text placeholder:text-text-faint focus:outline-none focus:border-accent"
             />
           </div>
+          <select
+            value={typeFilter}
+            onChange={(e) => setTypeFilter(e.target.value as TypeFilter)}
+            className="w-full bg-background border border-border rounded px-1.5 py-1 text-xs
+                       text-text focus:outline-none focus:border-accent"
+          >
+            <option value="all">All types</option>
+            {TYPE_FILTER_OPTIONS.map((t) => (
+              <option key={t} value={t}>
+                {TYPE_LABELS[t]}
+              </option>
+            ))}
+          </select>
         </div>
       )}
 
       <div className="flex-1 overflow-y-auto">
         {orderedLayers.length === 0 && (
           <div className="flex flex-col items-center justify-center p-6 text-center text-text-muted mt-4">
-            {q ? (
-              <p className="text-xs">No layers match "{query}".</p>
+            {filtering ? (
+              <p className="text-xs">
+                No layers match{query.trim() ? ` "${query}"` : ""}
+                {typeFilter !== "all" ? ` (type: ${TYPE_LABELS[typeFilter]})` : ""}.
+              </p>
             ) : (
               <>
                 <Square size={24} className="mb-3 text-text-faint/70" />

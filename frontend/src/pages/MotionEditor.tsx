@@ -16,6 +16,9 @@ import {
   Spline,
   ChevronRight,
   HelpCircle,
+  Grid3X3,
+  AlignStartVertical,
+  Magnet,
 } from "lucide-react";
 import { getMotionProject, saveMotionProject, uploadMotionAsset, type MotionAsset } from "../api/motion";
 import { editorReducer, getResolvedTransform, newId, type EditorState } from "../motion/state";
@@ -40,8 +43,9 @@ import { TransitionModal } from "../motion/transitions/TransitionModal";
 import { applyTransitionToScene } from "../motion/transitions/applyTransitionToScene";
 import { OnboardingWalkthrough } from "../motion/onboarding/OnboardingWalkthrough";
 import { SubtitleImportButton } from "../motion/subtitles/SubtitleImportButton";
-import type { AnimatableProperty, LayerType, MotionConnector, MotionLayer, MotionScene, Transform } from "../types/motion";
+import type { AnimatableProperty, LayerType, MotionConnector, MotionLayer, MotionProject, MotionScene, Transform } from "../types/motion";
 import { copyToClipboard, getClipboard, preparePaste, preparePasteSpecial } from "../motion/clipboard";
+import { clearRecoverySnapshot, getRecoverySnapshot, saveRecoverySnapshot } from "../motion/recovery";
 
 const INITIAL_STATE: EditorState = {
   project: { id: "", name: "", scenes: [], created_at: "", updated_at: "" },
@@ -81,6 +85,9 @@ export function MotionEditor() {
   const [rippleMode, setRippleMode] = useState(false);
   const [connectFrom, setConnectFrom] = useState<string | null>(null);
   const [videoImporting, setVideoImporting] = useState(false);
+  // LT-AUTOSAVE-RECOVERY: modal state for offering to restore a local snapshot.
+  const [recoveryOpen, setRecoveryOpen] = useState(false);
+  const [recoveryProject, setRecoveryProject] = useState<MotionProject | null>(null);
   // The editor stacks fixed-height panels under the canvas. On a laptop that
   // furniture (toolbar + audio + timeline + history) can exceed half the
   // viewport and crush the canvas to a strip. Both bottom panels collapse to
@@ -92,6 +99,20 @@ export function MotionEditor() {
   const [timelineOpen, setTimelineOpen] = useState(
     () => localStorage.getItem("motion_timeline_open") !== "0",
   );
+  // LT-GRIDRULERS — editor-only overlay toggles, persisted in localStorage.
+  const [showGrid, setShowGrid] = useState(
+    () => localStorage.getItem("motion_show_grid") === "1",
+  );
+  const [showRulers, setShowRulers] = useState(
+    () => localStorage.getItem("motion_show_rulers") === "1",
+  );
+  const [snapToGrid, setSnapToGrid] = useState(
+    () => localStorage.getItem("motion_snap_grid") === "1",
+  );
+  const [gridSize, setGridSize] = useState(() => {
+    const saved = localStorage.getItem("motion_grid_size");
+    return saved ? Math.max(10, Math.min(100, Number(saved))) : 20;
+  });
 
   // LT-PANELS — resizable panel sizes persisted to localStorage.
   // Keys: leftSidebar, rightSidebar, audioHeight, timelineHeight.
@@ -147,6 +168,10 @@ export function MotionEditor() {
   // the backend, so a fractional delta would fail to save once accumulated).
   const nudgeAccumRef = useRef<{ signature: string | null; trueAccum: number; dispatchedSoFar: number; baseValues: Record<string, { x: number }> }>({ signature: null, trueAccum: 0, dispatchedSoFar: 0, baseValues: {} });
   const activeSceneRef = useRef<MotionScene | null>(null);
+  // LT-AUTOSAVE-RECOVERY: refs for unmount final snapshot (cleanup closure
+  // captures stale values, so we read the latest via refs instead).
+  const latestDirtyRef = useRef(false);
+  const latestProjectRef = useRef<MotionProject | null>(null);
   // LT-PANELS drag state. These live HERE, with the other refs, and not down
   // beside their handlers — there are `Loading…` / error early returns further
   // down, so a hook declared after them doesn't run on the first render and
@@ -173,7 +198,14 @@ export function MotionEditor() {
   useEffect(() => {
     if (!projectId) return;
     getMotionProject(projectId)
-      .then((project) => dispatch({ type: "LOAD_PROJECT", project }))
+      .then((serverProject) => {
+        dispatch({ type: "LOAD_PROJECT", project: serverProject });
+        const recovery = getRecoverySnapshot(projectId);
+        if (recovery && recovery.timestamp > serverProject.updated_at) {
+          setRecoveryProject(recovery.project);
+          setRecoveryOpen(true);
+        }
+      })
       .catch((err) => setLoadError(String(err)));
   }, [projectId]);
 
@@ -183,10 +215,12 @@ export function MotionEditor() {
     if (!state.dirty || !state.project.id) return;
     if (autosaveTimer.current) clearTimeout(autosaveTimer.current);
     autosaveTimer.current = setTimeout(async () => {
+      saveRecoverySnapshot(state.project);
       setSaveStatus("saving");
       try {
         const saved = await saveMotionProject(state.project);
         dispatch({ type: "MARK_SAVED", project: saved });
+        clearRecoverySnapshot(state.project.id);
         setSaveStatus("saved");
       } catch {
         setSaveStatus("idle");
@@ -196,6 +230,16 @@ export function MotionEditor() {
       if (autosaveTimer.current) clearTimeout(autosaveTimer.current);
     };
   }, [state.dirty, state.project]);
+
+  // LT-AUTOSAVE-RECOVERY: final snapshot on unmount so crash recovery works
+  // even if the user closes the tab right after editing.
+  useEffect(() => {
+    return () => {
+      if (latestDirtyRef.current && latestProjectRef.current) {
+        saveRecoverySnapshot(latestProjectRef.current);
+      }
+    };
+  }, []);
 
   // Keyboard shortcuts, ignored while typing in a text field/input so they
   // don't fight with normal editing.
@@ -365,6 +409,8 @@ export function MotionEditor() {
     ? (scene.layers.find((l) => l.id === selectedId)?.visible_start_ms ?? null)
     : null;
   activeSceneRef.current = scene ?? null;
+  latestDirtyRef.current = state.dirty;
+  latestProjectRef.current = state.project;
   // Transport keys are disabled on an empty scene for the same reason the
   // timeline's buttons are — nothing to play, so Space shouldn't sweep a
   // playhead over a blank canvas.
@@ -482,6 +528,23 @@ export function MotionEditor() {
     const aligned = ALIGN_OPERATIONS[kind](selectedLayers.map((l) => l.transform));
     const updates = selectedLayers.map((l, i) => ({ layerId: l.id, transform: aligned[i] }));
     dispatch({ type: "ALIGN_LAYERS", updates });
+  }
+
+  function handleRestoreLocal() {
+    if (recoveryProject) {
+      dispatch({ type: "LOAD_PROJECT", project: recoveryProject });
+      clearRecoverySnapshot(recoveryProject.id);
+      setRecoveryOpen(false);
+      setRecoveryProject(null);
+    }
+  }
+
+  function handleKeepServer() {
+    if (recoveryProject) {
+      clearRecoverySnapshot(recoveryProject.id);
+      setRecoveryOpen(false);
+      setRecoveryProject(null);
+    }
   }
 
   async function handleImportVideo(file: File) {
@@ -822,6 +885,52 @@ export function MotionEditor() {
 
         <AlignmentToolbar onAlign={handleAlign} selectedCount={state.selectedLayerIds.length} />
 
+        <div className="w-px h-5 bg-border mx-1.5" />
+
+        <div className="flex items-center gap-0.5">
+          <button
+            type="button"
+            title={showGrid ? "Hide grid" : "Show grid"}
+            onClick={() => { setShowGrid((v) => { const n = !v; localStorage.setItem("motion_show_grid", n ? "1" : "0"); return n; }); }}
+            className={`p-1.5 rounded ${showGrid ? "bg-accent text-white" : "hover:bg-surface-hover text-text-muted hover:text-text"}`}
+          >
+            <Grid3X3 size={16} />
+          </button>
+          <button
+            type="button"
+            title={snapToGrid ? "Snap to grid ON" : "Snap to grid OFF"}
+            onClick={() => { setSnapToGrid((v) => { const n = !v; localStorage.setItem("motion_snap_grid", n ? "1" : "0"); return n; }); }}
+            className={`p-1.5 rounded ${snapToGrid ? "bg-accent text-white" : "hover:bg-surface-hover text-text-muted hover:text-text"}`}
+          >
+            <Magnet size={16} />
+          </button>
+          {showGrid && (
+            <select
+              title="Grid spacing (px)"
+              value={gridSize}
+              onChange={(e) => { const v = Number(e.target.value); setGridSize(v); localStorage.setItem("motion_grid_size", String(v)); }}
+              className="ml-0.5 h-6 w-12 rounded border border-border bg-surface text-[11px] text-text-muted outline-none cursor-pointer"
+            >
+              <option value={10}>10</option>
+              <option value={20}>20</option>
+              <option value={40}>40</option>
+              <option value={80}>80</option>
+              <option value={100}>100</option>
+            </select>
+          )}
+        </div>
+
+        <button
+          type="button"
+          title={showRulers ? "Hide rulers" : "Show rulers"}
+          onClick={() => { setShowRulers((v) => { const n = !v; localStorage.setItem("motion_show_rulers", n ? "1" : "0"); return n; }); }}
+          className={`p-1.5 rounded ${showRulers ? "bg-accent text-white" : "hover:bg-surface-hover text-text-muted hover:text-text"}`}
+        >
+          <AlignStartVertical size={16} />
+        </button>
+
+        <div className="w-px h-5 bg-border mx-1.5" />
+
         <div className="flex-1" />
 
         <span className="text-xs text-text-faint flex items-center gap-1.5 pr-2">
@@ -879,6 +988,34 @@ export function MotionEditor() {
 
       <CommandPalette isOpen={paletteOpen} onClose={() => setPaletteOpen(false)} commands={commands} />
       <ShortcutsOverlay isOpen={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
+
+      {/* LT-AUTOSAVE-RECOVERY: conflict resolution modal */}
+      {recoveryOpen && recoveryProject && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="bg-surface border border-border rounded-xl shadow-2xl p-6 max-w-md w-full mx-4">
+            <h2 className="text-lg font-semibold text-text mb-2">Recover Unsaved Changes?</h2>
+            <p className="text-sm text-text-muted mb-4">
+              A local snapshot from{" "}
+              {new Date(getRecoverySnapshot(recoveryProject.id)?.timestamp ?? "").toLocaleString()}
+              {" "}was found that is newer than the saved version on the server. What would you like to do?
+            </p>
+            <div className="flex gap-3 justify-end">
+              <button
+                onClick={handleKeepServer}
+                className="px-4 py-2 rounded-md border border-border text-text hover:bg-surface-hover transition-colors"
+              >
+                Keep Server Version
+              </button>
+              <button
+                onClick={handleRestoreLocal}
+                className="px-4 py-2 rounded-md bg-accent text-white hover:opacity-90 transition-colors"
+              >
+                Restore Local Snapshot
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Workspace ── */}
       <div className="flex-1 flex min-h-0">
@@ -940,6 +1077,10 @@ export function MotionEditor() {
             connectFromLayerId={connectFrom}
             onConnectPick={handleConnectPick}
             onOpenInsert={() => setInsertOpen(true)}
+            showGrid={showGrid}
+            gridSize={gridSize}
+            showRulers={showRulers}
+            snapToGrid={snapToGrid}
           />
         </div>
 
@@ -1059,6 +1200,9 @@ export function MotionEditor() {
           onSelectLayer={(id) => dispatch({ type: "SELECT_LAYERS", ids: [id] })}
           onMoveKeyframe={(layerId, keyframeId, timeMs) =>
             dispatch({ type: "UPDATE_KEYFRAME", layerId, keyframeId, patch: { time_ms: Math.round(timeMs) } })
+          }
+          onUpdateKeyframe={(layerId, keyframeId, patch) =>
+            dispatch({ type: "UPDATE_KEYFRAME", layerId, keyframeId, patch })
           }
           onDeleteKeyframe={(layerId, keyframeId) => dispatch({ type: "DELETE_KEYFRAME", layerId, keyframeId })}
           onTogglePlay={playback.toggle}

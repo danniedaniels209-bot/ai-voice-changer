@@ -14,6 +14,7 @@ import { CaptionGroupPanel } from "./subtitles/CaptionGroupPanel";
 import { ColorGradePicker } from "./colorgrade/ColorGradePicker";
 import { BlendModePicker } from "./blend/BlendModePicker";
 import { MotionBlurPicker } from "./motionblur/MotionBlurPicker";
+import { TextPathPicker } from "./textpath/TextPathPicker";
 
 /** Default starting points for "Add gradient"/"Add shadow" — matches what
  *  GradientPicker / ShadowPicker already consider reasonable, so the user
@@ -561,6 +562,10 @@ export function Inspector({
               value={layer.text.stroke_width ?? 0}
               onChange={(v) => onUpdateLayer({ text: { ...layer.text!, stroke_width: Math.max(0, v) } })}
               step={0.5}
+            />
+            <TextPathPicker
+              text={layer.text}
+              onChange={(patch) => onUpdateLayer({ text: { ...layer.text!, ...patch } })}
             />
           </div>
         </div>
