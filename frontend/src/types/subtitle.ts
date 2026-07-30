@@ -15,6 +15,7 @@ export interface SubtitleWord {
   text: string;
   start: number; // seconds
   end: number;
+  confidence?: number; // 0.0 - 1.0 Whisper confidence
 }
 
 export interface SubtitleCue {

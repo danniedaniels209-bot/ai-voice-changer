@@ -39,7 +39,8 @@ import { TransitionModal } from "../motion/transitions/TransitionModal";
 import { applyTransitionToScene } from "../motion/transitions/applyTransitionToScene";
 import { OnboardingWalkthrough } from "../motion/onboarding/OnboardingWalkthrough";
 import { SubtitleImportButton } from "../motion/subtitles/SubtitleImportButton";
-import type { AnimatableProperty, LayerType, MotionLayer, Transform } from "../types/motion";
+import type { AnimatableProperty, LayerType, MotionConnector, MotionLayer, MotionScene, Transform } from "../types/motion";
+import { copyToClipboard, getClipboard, preparePaste, preparePasteSpecial } from "../motion/clipboard";
 
 const INITIAL_STATE: EditorState = {
   project: { id: "", name: "", scenes: [], created_at: "", updated_at: "" },
@@ -144,6 +145,7 @@ export function MotionEditor() {
   // reducer only ever sees whole milliseconds (visible_start_ms is `int` on
   // the backend, so a fractional delta would fail to save once accumulated).
   const nudgeAccumRef = useRef({ layerId: null as string | null, trueAccum: 0, dispatchedSoFar: 0 });
+  const activeSceneRef = useRef<MotionScene | null>(null);
   // LT-PANELS drag state. These live HERE, with the other refs, and not down
   // beside their handlers — there are `Loading…` / error early returns further
   // down, so a hook declared after them doesn't run on the first render and
@@ -216,6 +218,34 @@ export function MotionEditor() {
       } else if (mod && (e.key.toLowerCase() === "y" || (e.key.toLowerCase() === "z" && e.shiftKey))) {
         e.preventDefault();
         dispatch({ type: "REDO" });
+      } else if (mod && e.key.toLowerCase() === "c") {
+        const scene = activeSceneRef.current;
+        if (!scene || selectionRef.current.length === 0) return;
+        e.preventDefault();
+        const ids = new Set(selectionRef.current);
+        const layers = scene.layers.filter((l: MotionLayer) => ids.has(l.id));
+        const connectors = (scene.connectors ?? []).filter(
+          (c: MotionConnector) => ids.has(c.source.layer_id) && ids.has(c.target.layer_id),
+        );
+        copyToClipboard(layers, connectors);
+      } else if (mod && e.shiftKey && e.key.toLowerCase() === "v") {
+        // Paste special: static layers (no keyframes). Resolves each
+        // layer's transform at the current playhead, stripping animation.
+        const clip = getClipboard();
+        const scene = activeSceneRef.current;
+        if (!clip || !scene) return;
+        e.preventDefault();
+        const { layers, connectors } = preparePasteSpecial(clip, scene, playbackRef.current.playheadMs);
+        if (layers.length === 0) return;
+        dispatch({ type: "PASTE_LAYERS", layers, connectors });
+      } else if (mod && e.key.toLowerCase() === "v") {
+        const clip = getClipboard();
+        const scene = activeSceneRef.current;
+        if (!clip || !scene) return;
+        e.preventDefault();
+        const { layers, connectors } = preparePaste(clip, scene, playbackRef.current.playheadMs);
+        if (layers.length === 0) return;
+        dispatch({ type: "PASTE_LAYERS", layers, connectors });
       } else if (mod && e.key.toLowerCase() === "d") {
         // Ctrl/Cmd+D duplicates the selection. Browsers bind this to
         // "bookmark this page", so preventDefault is mandatory.
@@ -310,6 +340,7 @@ export function MotionEditor() {
   selectedLayerStartRef.current = selectedId && scene
     ? (scene.layers.find((l) => l.id === selectedId)?.visible_start_ms ?? null)
     : null;
+  activeSceneRef.current = scene ?? null;
   // Transport keys are disabled on an empty scene for the same reason the
   // timeline's buttons are — nothing to play, so Space shouldn't sweep a
   // playhead over a blank canvas.
@@ -359,6 +390,20 @@ export function MotionEditor() {
     const updates = applyTransitionToScene(activeScene, transitionId, 600);
     if (updates.length === 0) return;
     dispatch({ type: "APPLY_KEYFRAMES_BATCH", updates });
+  }
+
+  function handleSceneTransition(sceneId: string, transitionId: string) {
+    const scene = state.project.scenes.find((s) => s.id === sceneId);
+    if (!scene) return;
+    const updates = applyTransitionToScene(scene, transitionId, 600);
+    if (updates.length === 0) return;
+    dispatch({ type: "SET_SCENE_TRANSITION", sceneId, transitionId, updates });
+  }
+
+  function handleClearSceneTransition(sceneId: string) {
+    const scene = state.project.scenes.find((s) => s.id === sceneId);
+    if (!scene) return;
+    dispatch({ type: "SET_SCENE_TRANSITION", sceneId, transitionId: null, updates: [] });
   }
 
   /** Click-two-layers gesture. First click arms the source, second click
@@ -478,6 +523,32 @@ export function MotionEditor() {
     if (Object.keys(toBase).length > 0) {
       dispatch({ type: "UPDATE_TRANSFORM", layerId, patch: toBase });
     }
+  }
+
+  function handleMoveLayers(moves: Array<{ layerId: string; x: number; y: number }>) {
+    if (moves.length === 0) return;
+    if (moves.length === 1) {
+      applyTransformEdit(moves[0].layerId, { x: moves[0].x, y: moves[0].y });
+      return;
+    }
+    const updates = moves.map((m) => ({
+      layerId: m.layerId,
+      transform: { x: m.x, y: m.y },
+    }));
+    dispatch({ type: "MOVE_LAYERS_BATCH", updates, timeMs: state.playheadMs });
+  }
+
+  function handleResizeLayers(moves: Array<{ layerId: string; patch: Partial<Transform> }>) {
+    if (moves.length === 0) return;
+    if (moves.length === 1) {
+      applyTransformEdit(moves[0].layerId, moves[0].patch);
+      return;
+    }
+    const updates = moves.map((m) => ({
+      layerId: m.layerId,
+      transform: m.patch,
+    }));
+    dispatch({ type: "MOVE_LAYERS_BATCH", updates, timeMs: state.playheadMs });
   }
 
   // LT-PANELS — drag handlers for resizable panels.
@@ -680,7 +751,14 @@ export function MotionEditor() {
         >
           <Shapes size={16} />
         </button>
-        <SubtitleImportButton sceneWidth={activeScene.width} sceneHeight={activeScene.height} sceneDurationMs={activeScene.duration_ms} onInsertLayers={handleInsertLayers} />
+        <SubtitleImportButton
+          projectId={projectId}
+          audioTracks={activeScene.audio_tracks}
+          sceneWidth={activeScene.width}
+          sceneHeight={activeScene.height}
+          sceneDurationMs={activeScene.duration_ms}
+          onInsertLayers={handleInsertLayers}
+        />
 
         <div className="w-px h-5 bg-border mx-1.5" />
 
@@ -778,6 +856,8 @@ export function MotionEditor() {
               onDelete={(sceneId) => dispatch({ type: "DELETE_SCENE", sceneId })}
               onReorder={(sceneId, toIndex) => dispatch({ type: "REORDER_SCENES", sceneId, toIndex })}
               onAdd={() => dispatch({ type: "ADD_SCENE" })}
+              onApplyTransition={handleSceneTransition}
+              onClearTransition={handleClearSceneTransition}
             />
           </div>
           <div className="flex-1 min-h-0">
@@ -812,7 +892,9 @@ export function MotionEditor() {
             selectedLayerIds={state.selectedLayerIds}
             onSelect={(ids) => dispatch({ type: "SELECT_LAYERS", ids })}
             onMoveLayer={(layerId, x, y) => applyTransformEdit(layerId, { x, y })}
+            onMoveLayers={handleMoveLayers}
             onResizeLayer={(layerId, patch) => applyTransformEdit(layerId, patch)}
+            onResizeLayers={handleResizeLayers}
             getTransform={(layer) => getResolvedTransform(state, layer)}
             playheadMs={state.playheadMs}
             isPlaying={playback.isPlaying}
@@ -894,6 +976,7 @@ export function MotionEditor() {
           onRename={(trackId, name) => dispatch({ type: "RENAME_AUDIO_TRACK", trackId, name })}
           onToggleMute={(trackId) => dispatch({ type: "TOGGLE_AUDIO_MUTE", trackId })}
           onToggleSolo={(trackId) => dispatch({ type: "TOGGLE_AUDIO_SOLO", trackId })}
+          onToggleDucking={(trackId) => dispatch({ type: "TOGGLE_AUDIO_DUCKING", trackId })}
           onVolumeChange={(trackId, volume) => dispatch({ type: "SET_AUDIO_VOLUME", trackId, volume })}
           onDelete={(trackId) => dispatch({ type: "DELETE_AUDIO_TRACK", trackId })}
           onAddTrack={(kind) => dispatch({ type: "ADD_AUDIO_TRACK", kind })}

@@ -23,6 +23,72 @@ from app.services.ffmpeg_service import _video_encode_args, resolve_ffmpeg_binar
 logger = get_logger(__name__)
 
 SUPPORTED_FORMATS = {"mp4", "mov", "gif", "png_sequence", "png", "zip"}
+
+# LT-AUDIODUCK constants. Not user-configurable in v1 (the task scope is an
+# on/off toggle, not a mix console) — a fixed ratio and ramp that sound
+# reasonable for spoken-word-over-music, documented here so a future v2
+# exposing them as sliders has one place to start from.
+_DUCK_RATIO = 0.35  # music volume multiplier while a voiceover line is active
+_DUCK_RAMP_S = 0.25  # seconds to fade into/out of the ducked level
+
+
+def _duck_volume_expr(
+    track_scene_offset_ms: int,
+    track_start_ms: int,
+    track_duration_ms: int,
+    voiceover_windows_ms: list[tuple[int, int]],
+) -> str | None:
+    """
+    An ffmpeg `volume=<expr>:eval=frame` expression that multiplies this
+    track's volume down to `_DUCK_RATIO` while ANY voiceover window is
+    active, ramping over `_DUCK_RAMP_S` at each edge, and leaves it at 1.0
+    everywhere else.
+
+    `voiceover_windows_ms` are (start, end) in the SAME scene-absolute
+    timeline `track_scene_offset_ms`/`track_start_ms` are measured in — the
+    caller is responsible for gathering "every active voiceover track in
+    this track's own scene" (see the call site). Returns None when there is
+    nothing to duck under, so the caller can skip adding a no-op filter
+    stage entirely.
+
+    Expressed in this track's OWN local time (t=0 at its post-atrim origin)
+    because ffmpeg per-stream filter expressions are stream-local — the
+    existing `afade=t=out:st=...` a few lines up in the caller already
+    relies on that same local reference (computed from `track.duration_ms`,
+    not the scene's), so ducking has to use it too or the two would
+    disagree about what time `t` means in the same filter chain.
+    """
+    track_scene_start_ms = track_scene_offset_ms + track_start_ms
+    track_duration_s = track_duration_ms / 1000.0
+
+    # Convert to this track's local seconds and merge windows that touch or
+    # overlap — not strictly required for correctness (max() below already
+    # combines overlapping ramps into one smooth shape), but it keeps the
+    # expression shorter for the common case of back-to-back voiceover lines.
+    local: list[tuple[float, float]] = []
+    for start_ms, end_ms in sorted(voiceover_windows_ms):
+        s = (start_ms - track_scene_start_ms) / 1000.0
+        e = (end_ms - track_scene_start_ms) / 1000.0
+        if e <= 0 or s >= track_duration_s:
+            continue  # entirely outside this track's own timeline
+        if local and s <= local[-1][1]:
+            local[-1] = (local[-1][0], max(local[-1][1], e))
+        else:
+            local.append((s, e))
+
+    if not local:
+        return None
+
+    def trapezoid(s: float, e: float) -> str:
+        rise = f"clip((t-({s - _DUCK_RAMP_S}))/{_DUCK_RAMP_S},0,1)"
+        fall = f"clip(({e + _DUCK_RAMP_S}-t)/{_DUCK_RAMP_S},0,1)"
+        return f"min({rise},{fall})"
+
+    envelope = trapezoid(*local[0])
+    for s, e in local[1:]:
+        envelope = f"max({envelope},{trapezoid(s, e)})"
+
+    return f"volume='1-(1-{_DUCK_RATIO})*({envelope})':eval=frame"
 _BITRATE_RE = re.compile(r"^[1-9][0-9]*(?:k|K|m|M)?$")
 _prores_encoder_available_cache: bool | None = None
 
@@ -291,6 +357,23 @@ def export_project(
                 video_args = _mov_encode_args(transparent) if fmt == "mov" else _mp4_encode_args(video_crf, video_bitrate)
                 video_filter_args = [] if fmt == "mov" else ["-vf", "format=yuv420p"]
                 filters = []
+
+                # LT-AUDIODUCK: every ACTUALLY-MIXED (resolved file, not
+                # muted, solo-respecting — same set active_tracks already
+                # enforces) voiceover window, grouped by scene. A track can
+                # only duck under a voiceover that is genuinely part of the
+                # mix; one whose file failed to resolve was already logged
+                # and dropped from active_tracks, so it correctly can't duck
+                # anything either.
+                voiceover_windows_by_scene: dict[int, list[tuple[int, int]]] = {}
+                for vt, _vt_path, vt_scene_offset_ms in active_tracks:
+                    if vt.kind != "voiceover":
+                        continue
+                    abs_start = vt_scene_offset_ms + vt.start_time_ms
+                    voiceover_windows_by_scene.setdefault(vt_scene_offset_ms, []).append(
+                        (abs_start, abs_start + vt.duration_ms)
+                    )
+
                 for idx, (track, track_path, scene_offset_ms) in enumerate(active_tracks, start=1):
                     cmd.extend(["-i", str(track_path)])
                     t_filter = f"[{idx}:a]atrim=0:{track.duration_ms / 1000.0}"
@@ -300,6 +383,15 @@ def export_project(
                         fade_out_start = (track.duration_ms - track.fade_out_ms) / 1000.0
                         t_filter += f",afade=t=out:st={fade_out_start}:d={track.fade_out_ms / 1000.0}"
                     t_filter += f",volume={track.volume}"
+                    if track.ducking_enabled and track.kind != "voiceover":
+                        duck_expr = _duck_volume_expr(
+                            scene_offset_ms,
+                            track.start_time_ms,
+                            track.duration_ms,
+                            voiceover_windows_by_scene.get(scene_offset_ms, []),
+                        )
+                        if duck_expr:
+                            t_filter += f",{duck_expr}"
                     delay_ms = scene_offset_ms + track.start_time_ms
                     if delay_ms > 0:
                         t_filter += f",adelay={delay_ms}|{delay_ms}"

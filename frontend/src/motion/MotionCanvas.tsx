@@ -33,7 +33,9 @@ interface MotionCanvasProps {
   selectedLayerIds: string[];
   onSelect: (ids: string[]) => void;
   onMoveLayer: (layerId: string, x: number, y: number) => void;
+  onMoveLayers?: (moves: Array<{ layerId: string; x: number; y: number }>) => void;
   onResizeLayer: (layerId: string, patch: Partial<Transform>) => void;
+  onResizeLayers?: (moves: Array<{ layerId: string; patch: Partial<Transform> }>) => void;
   /** The transform to actually draw for a layer — resolved through its
    * keyframes at the current playhead, or its static transform when it
    * has none. Dragging starts FROM this value too, so grabbing an
@@ -157,12 +159,46 @@ function resolveFill(
   return solidFill;
 }
 
+interface DragLayerItem {
+  layerId: string;
+  startX: number;
+  startY: number;
+  startWidth: number;
+  startHeight: number;
+}
+
+interface DragState {
+  primaryLayerId: string;
+  startClientX: number;
+  startClientY: number;
+  didMove: boolean;
+  alreadySelectedOnMouseDown: boolean;
+  layers: DragLayerItem[];
+}
+
+interface ResizeLayerItem {
+  layerId: string;
+  start: Transform;
+}
+
+interface ResizeState {
+  primaryLayerId: string;
+  handle: ResizeHandle;
+  startClientX: number;
+  startClientY: number;
+  bounds: { minX: number; minY: number; maxX: number; maxY: number; width: number; height: number };
+  anchor: { x: number; y: number };
+  layers: ResizeLayerItem[];
+}
+
 export function MotionCanvas({
   scene,
   selectedLayerIds,
   onSelect,
   onMoveLayer,
+  onMoveLayers,
   onResizeLayer,
+  onResizeLayers,
   getTransform,
   playheadMs,
   isPlaying,
@@ -173,9 +209,9 @@ export function MotionCanvas({
 }: MotionCanvasProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   const [viewport, setViewport] = useState<Viewport>({ x: 0, y: 0, zoom: 0.5 });
-  const [dragPreview, setDragPreview] = useState<{ layerId: string; x: number; y: number } | null>(null);
+  const [dragPreview, setDragPreview] = useState<Record<string, { x: number; y: number }> | null>(null);
   const [resizePreview, setResizePreview] = useState<
-    { layerId: string; x: number; y: number; width: number; height: number } | null
+    Record<string, { x: number; y: number; width: number; height: number }> | null
   >(null);
   const [guides, setGuides] = useState<GuideLine[]>([]);
   const [showSafeArea, setShowSafeArea] = useState(false);
@@ -194,22 +230,8 @@ export function MotionCanvas({
   }, []);
 
   const panState = useRef<{ startX: number; startY: number; originX: number; originY: number } | null>(null);
-  const dragState = useRef<{
-    layerId: string;
-    startClientX: number;
-    startClientY: number;
-    startX: number;
-    startY: number;
-    startWidth: number;
-    startHeight: number;
-  } | null>(null);
-  const resizeState = useRef<{
-    layerId: string;
-    handle: ResizeHandle;
-    startClientX: number;
-    startClientY: number;
-    start: Transform;
-  } | null>(null);
+  const dragState = useRef<DragState | null>(null);
+  const resizeState = useRef<ResizeState | null>(null);
 
   function handleWheel(e: React.WheelEvent<SVGSVGElement>) {
     e.preventDefault();
@@ -251,7 +273,9 @@ export function MotionCanvas({
       onConnectPick?.(layer.id);
       return;
     }
+
     const alreadySelected = selectedLayerIds.includes(layer.id);
+
     if (e.shiftKey || e.ctrlKey || e.metaKey) {
       // Toggle into/out of the selection instead of replacing it — same
       // multi-select gesture as the layer panel, needed for align/distribute.
@@ -263,30 +287,96 @@ export function MotionCanvas({
       // supported yet (each layer would need its own drag delta applied).
       return;
     }
-    // A plain click always collapses the selection to just this layer —
-    // predictable, matches the layer panel's behavior, and keeps drag
-    // math simple (only ever one layer's transform to update).
-    onSelect([layer.id]);
-    const current = getTransform(layer);
+
+    let targetIds: string[];
+    if (alreadySelected && selectedLayerIds.length > 1) {
+      targetIds = selectedLayerIds;
+    } else {
+      onSelect([layer.id]);
+      targetIds = [layer.id];
+    }
+
+    const activeLayers = scene.layers.filter(
+      (l) => targetIds.includes(l.id) && !isEffectivelyLocked(l, scene.layers),
+    );
+
+    if (activeLayers.length === 0) return;
+
     dragState.current = {
-      layerId: layer.id,
+      primaryLayerId: layer.id,
       startClientX: e.clientX,
       startClientY: e.clientY,
-      startX: current.x,
-      startY: current.y,
-      startWidth: current.width,
-      startHeight: current.height,
+      didMove: false,
+      alreadySelectedOnMouseDown: alreadySelected && selectedLayerIds.length > 1,
+      layers: activeLayers.map((l) => {
+        const t = getTransform(l);
+        return {
+          layerId: l.id,
+          startX: t.x,
+          startY: t.y,
+          startWidth: t.width,
+          startHeight: t.height,
+        };
+      }),
     };
   }
 
   function handleResizeMouseDown(e: React.MouseEvent, layer: MotionLayer, handle: ResizeHandle) {
     e.stopPropagation();
+
+    let targetIds: string[];
+    if (selectedLayerIds.includes(layer.id) && selectedLayerIds.length > 1) {
+      targetIds = selectedLayerIds;
+    } else {
+      onSelect([layer.id]);
+      targetIds = [layer.id];
+    }
+
+    const activeLayers = scene.layers.filter(
+      (l) => targetIds.includes(l.id) && !isEffectivelyLocked(l, scene.layers),
+    );
+
+    if (activeLayers.length === 0) return;
+
+    // Calculate group bounding box
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+
+    const layerItems: ResizeLayerItem[] = activeLayers.map((l) => {
+      const t = getTransform(l);
+      minX = Math.min(minX, t.x);
+      minY = Math.min(minY, t.y);
+      maxX = Math.max(maxX, t.x + t.width);
+      maxY = Math.max(maxY, t.y + t.height);
+      return { layerId: l.id, start: t };
+    });
+
+    const bounds = {
+      minX,
+      minY,
+      maxX,
+      maxY,
+      width: Math.max(1, maxX - minX),
+      height: Math.max(1, maxY - minY),
+    };
+
+    // Determine fixed anchor point opposite to the handle
+    let anchor = { x: minX, y: minY };
+    if (handle === "nw") anchor = { x: maxX, y: maxY };
+    else if (handle === "ne") anchor = { x: minX, y: maxY };
+    else if (handle === "sw") anchor = { x: maxX, y: minY };
+    else if (handle === "se") anchor = { x: minX, y: minY };
+
     resizeState.current = {
-      layerId: layer.id,
+      primaryLayerId: layer.id,
       handle,
       startClientX: e.clientX,
       startClientY: e.clientY,
-      start: getTransform(layer),
+      bounds,
+      anchor,
+      layers: layerItems,
     };
   }
 
@@ -299,41 +389,147 @@ export function MotionCanvas({
     }
     if (dragState.current) {
       const ds = dragState.current;
-      const dx = (e.clientX - ds.startClientX) / viewport.zoom;
-      const dy = (e.clientY - ds.startClientY) / viewport.zoom;
-      const rawX = ds.startX + dx;
-      const rawY = ds.startY + dy;
+      const clientDx = e.clientX - ds.startClientX;
+      const clientDy = e.clientY - ds.startClientY;
+
+      if (!ds.didMove && (Math.abs(clientDx) > 2 || Math.abs(clientDy) > 2)) {
+        ds.didMove = true;
+      }
+
+      const dx = clientDx / viewport.zoom;
+      const dy = clientDy / viewport.zoom;
+
+      const primary = ds.layers.find((l) => l.layerId === ds.primaryLayerId) || ds.layers[0];
+      const rawX = primary.startX + dx;
+      const rawY = primary.startY + dy;
       const threshold = 8 / viewport.zoom;
+      const draggedSet = new Set(ds.layers.map((l) => l.layerId));
       const otherTransforms = scene.layers
-        .filter((l) => l.id !== ds.layerId && !l.hidden && isLayerVisibleAt(l, scene.duration_ms, playheadMs))
+        .filter((l) => !draggedSet.has(l.id) && !l.hidden && isLayerVisibleAt(l, scene.duration_ms, playheadMs))
         .map((l) => getTransform(l));
-      const snap = computeDragSnap(rawX, rawY, ds.startWidth, ds.startHeight, scene.width, scene.height, otherTransforms, threshold, e.altKey);
-      setDragPreview({ layerId: ds.layerId, x: snap.x, y: snap.y });
+      const snap = computeDragSnap(rawX, rawY, primary.startWidth, primary.startHeight, scene.width, scene.height, otherTransforms, threshold, e.altKey);
+
+      const effectiveDx = snap.x - primary.startX;
+      const effectiveDy = snap.y - primary.startY;
+
+      const nextPreviews: Record<string, { x: number; y: number }> = {};
+      for (const item of ds.layers) {
+        nextPreviews[item.layerId] = {
+          x: item.startX + effectiveDx,
+          y: item.startY + effectiveDy,
+        };
+      }
+
+      setDragPreview(nextPreviews);
       setGuides(snap.guides);
       return;
     }
     if (resizeState.current) {
       const rs = resizeState.current;
-      const dx = (e.clientX - rs.startClientX) / viewport.zoom;
-      const dy = (e.clientY - rs.startClientY) / viewport.zoom;
-      const threshold = 8 / viewport.zoom;
-      const otherTransforms = scene.layers
-        .filter((l) => l.id !== rs.layerId && !l.hidden && isLayerVisibleAt(l, scene.duration_ms, playheadMs))
-        .map((l) => getTransform(l));
-      const snap = computeResizeSnap(rs.handle, rs.start, dx, dy, scene.width, scene.height, otherTransforms, threshold, e.altKey);
-      setResizePreview({ layerId: rs.layerId, x: snap.x, y: snap.y, width: snap.width, height: snap.height });
-      setGuides(snap.guides);
+      const clientDx = (e.clientX - rs.startClientX) / viewport.zoom;
+      const clientDy = (e.clientY - rs.startClientY) / viewport.zoom;
+
+      if (rs.layers.length === 1) {
+        // Single-layer resize snap path
+        const item = rs.layers[0];
+        const threshold = 8 / viewport.zoom;
+        const otherTransforms = scene.layers
+          .filter((l) => l.id !== item.layerId && !l.hidden && isLayerVisibleAt(l, scene.duration_ms, playheadMs))
+          .map((l) => getTransform(l));
+        const snap = computeResizeSnap(rs.handle, item.start, clientDx, clientDy, scene.width, scene.height, otherTransforms, threshold, e.altKey);
+        setResizePreview({ [item.layerId]: { x: snap.x, y: snap.y, width: snap.width, height: snap.height } });
+        setGuides(snap.guides);
+        return;
+      }
+
+      // Multi-layer group resize: scale around fixed anchor
+      let deltaW = 0;
+      let deltaH = 0;
+      if (rs.handle === "se") {
+        deltaW = clientDx;
+        deltaH = clientDy;
+      } else if (rs.handle === "nw") {
+        deltaW = -clientDx;
+        deltaH = -clientDy;
+      } else if (rs.handle === "ne") {
+        deltaW = clientDx;
+        deltaH = -clientDy;
+      } else if (rs.handle === "sw") {
+        deltaW = -clientDx;
+        deltaH = clientDy;
+      }
+
+      const newGroupWidth = Math.max(10, rs.bounds.width + deltaW);
+      const newGroupHeight = Math.max(10, rs.bounds.height + deltaH);
+
+      const scaleX = newGroupWidth / rs.bounds.width;
+      const scaleY = newGroupHeight / rs.bounds.height;
+
+      const nextPreviews: Record<string, { x: number; y: number; width: number; height: number }> = {};
+
+      for (const item of rs.layers) {
+        const t = item.start;
+        const relX = t.x - rs.anchor.x;
+        const relY = t.y - rs.anchor.y;
+
+        const newRelX = relX * scaleX;
+        const newRelY = relY * scaleY;
+
+        nextPreviews[item.layerId] = {
+          x: rs.anchor.x + newRelX,
+          y: rs.anchor.y + newRelY,
+          width: Math.max(1, t.width * scaleX),
+          height: Math.max(1, t.height * scaleY),
+        };
+      }
+
+      setResizePreview(nextPreviews);
+      setGuides([]);
     }
   }
 
   function handleMouseUp() {
     panState.current = null;
-    if (dragState.current && dragPreview) {
-      onMoveLayer(dragPreview.layerId, dragPreview.x, dragPreview.y);
+    if (dragState.current) {
+      const ds = dragState.current;
+      if (dragPreview && ds.didMove) {
+        const moves = ds.layers
+          .filter((l) => dragPreview[l.layerId] !== undefined)
+          .map((l) => ({
+            layerId: l.layerId,
+            x: dragPreview[l.layerId].x,
+            y: dragPreview[l.layerId].y,
+          }));
+
+        if (moves.length > 0) {
+          if (onMoveLayers) {
+            onMoveLayers(moves);
+          } else {
+            moves.forEach((m) => onMoveLayer(m.layerId, m.x, m.y));
+          }
+        }
+      } else if (!ds.didMove && ds.alreadySelectedOnMouseDown) {
+        onSelect([ds.primaryLayerId]);
+      }
     }
     if (resizeState.current && resizePreview) {
-      const { x, y, width, height } = resizePreview;
-      onResizeLayer(resizePreview.layerId, { x, y, width, height });
+      const rs = resizeState.current;
+      const moves = rs.layers
+        .filter((l) => resizePreview[l.layerId] !== undefined)
+        .map((l) => ({
+          layerId: l.layerId,
+          patch: resizePreview[l.layerId],
+        }));
+
+      if (moves.length > 0) {
+        if (onResizeLayers) {
+          onResizeLayers(moves);
+        } else if (moves.length === 1) {
+          onResizeLayer(moves[0].layerId, moves[0].patch);
+        } else {
+          moves.forEach((m) => onResizeLayer(m.layerId, m.patch));
+        }
+      }
     }
     dragState.current = null;
     resizeState.current = null;
@@ -343,11 +539,11 @@ export function MotionCanvas({
   }
 
   function layerTransform(layer: MotionLayer) {
-    if (dragPreview?.layerId === layer.id) {
-      return { ...getTransform(layer), x: dragPreview.x, y: dragPreview.y };
+    if (dragPreview?.[layer.id]) {
+      return { ...getTransform(layer), x: dragPreview[layer.id].x, y: dragPreview[layer.id].y };
     }
-    if (resizePreview?.layerId === layer.id) {
-      return { ...getTransform(layer), ...resizePreview };
+    if (resizePreview?.[layer.id]) {
+      return { ...getTransform(layer), ...resizePreview[layer.id] };
     }
     return getTransform(layer);
   }

@@ -7,6 +7,7 @@ import {
 } from "lucide-react";
 import type { MotionScene } from "../../types/motion";
 import { SceneThumbnail } from "./SceneThumbnail";
+import { SceneTransitionWidget } from "./SceneTransitionWidget";
 
 export interface ScenePanelProps {
   scenes: MotionScene[];
@@ -17,6 +18,8 @@ export interface ScenePanelProps {
   onDelete: (sceneId: string) => void;
   onReorder: (sceneId: string, toIndex: number) => void;
   onAdd?: () => void;
+  onApplyTransition?: (sceneId: string, transitionId: string) => void;
+  onClearTransition?: (sceneId: string) => void;
 }
 
 export function ScenePanel({
@@ -28,6 +31,8 @@ export function ScenePanel({
   onDelete,
   onReorder,
   onAdd,
+  onApplyTransition,
+  onClearTransition,
 }: ScenePanelProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draggingId, setDraggingId] = useState<string | null>(null);
@@ -76,9 +81,21 @@ export function ScenePanel({
           </div>
         )}
 
-        {scenes.map((scene) => {
+        {scenes.flatMap((scene, i) => {
+          const items: React.ReactNode[] = [];
+          if (i > 0 && (onApplyTransition || onClearTransition)) {
+            items.push(
+              <SceneTransitionWidget
+                key={`trans-${scene.id}`}
+                sceneId={scene.id}
+                transitionId={scene.transition_id}
+                onApplyTransition={onApplyTransition!}
+                onClearTransition={onClearTransition!}
+              />,
+            );
+          }
           const active = scene.id === activeSceneId;
-          return (
+          items.push(
             <div
               key={scene.id}
               draggable
@@ -144,8 +161,9 @@ export function ScenePanel({
               >
                 <Trash2 size={13} />
               </button>
-            </div>
+            </div>,
           );
+          return items;
         })}
 
         {scenes.length === 1 && (

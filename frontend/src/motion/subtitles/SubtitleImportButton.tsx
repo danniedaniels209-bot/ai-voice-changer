@@ -12,10 +12,12 @@
 
 import { useState } from "react";
 import { Captions } from "lucide-react";
-import type { MotionLayer } from "../../types/motion";
+import type { AudioTrack, MotionLayer } from "../../types/motion";
 import { SubtitleImportModal } from "./SubtitleImportModal";
 
 export interface SubtitleImportButtonProps {
+  projectId?: string;
+  audioTracks?: AudioTrack[];
   sceneWidth: number;
   sceneHeight: number;
   sceneDurationMs: number;
@@ -28,7 +30,7 @@ export function SubtitleImportButton(props: SubtitleImportButtonProps) {
     <>
       <button
         type="button"
-        title="Import subtitles — burn an .srt/.vtt caption file into this scene as text layers"
+        title="Import or auto-generate subtitles — burn captions into this scene as text layers"
         onClick={() => setOpen(true)}
         className="p-1.5 rounded hover:bg-surface-hover text-text-muted hover:text-text"
       >

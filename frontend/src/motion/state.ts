@@ -65,6 +65,11 @@ export type EditorAction =
   // ALIGN_LAYERS: one user action, one undo step.
   | { type: "APPLY_KEYFRAMES_BATCH"; updates: { layerId: string; keyframes: Keyframe[] }[] }
   | { type: "ALIGN_LAYERS"; updates: { layerId: string; transform: Transform }[] }
+  // LT-MULTIDRAG / LT-RESIZE-GROUP: batch move/resize updates for multiple layers.
+  // One snapshot for the whole group edit. For each layer in the batch, if a
+  // property is animated (keyframed), pins a keyframe at timeMs; otherwise
+  // updates the static base transform.
+  | { type: "MOVE_LAYERS_BATCH"; updates: { layerId: string; transform: Partial<Transform> }[]; timeMs: number }
   // LT-CAPTIONSTYLE: plural UPDATE_LAYER, same reasoning as
   // APPLY_KEYFRAMES_BATCH — restyling every caption from one subtitle
   // import should be one undo step, not one per layer. Generic (not
@@ -96,6 +101,8 @@ export type EditorAction =
   | { type: "RENAME_AUDIO_TRACK"; trackId: string; name: string }
   | { type: "TOGGLE_AUDIO_MUTE"; trackId: string }
   | { type: "TOGGLE_AUDIO_SOLO"; trackId: string }
+  // LT-AUDIODUCK: per-track toggle, same shape as TOGGLE_AUDIO_MUTE/SOLO.
+  | { type: "TOGGLE_AUDIO_DUCKING"; trackId: string }
   | { type: "SET_AUDIO_VOLUME"; trackId: string; volume: number }
   | { type: "DELETE_AUDIO_TRACK"; trackId: string }
   | { type: "ADD_AUDIO_MARKER"; trackId: string; timeMs: number }
@@ -109,6 +116,12 @@ export type EditorAction =
   // everything after the affected region. Both take ONE undo snapshot.
   | { type: "RIPPLE_DELETE" }
   | { type: "RIPPLE_TRIM"; layerId: string; endMs: number }
+  // LT-COPYPASTE: paste layers + connectors in one undo step, auto-select pasted layers.
+  | { type: "PASTE_LAYERS"; layers: MotionLayer[]; connectors: MotionConnector[] }
+  // LT-SCENETRANSITION-PICKER: set a scene's entrance transition AND apply
+  // the transition keyframes to its layers in one undo step. Passing
+  // transitionId=null clears the field and removes transition keyframes.
+  | { type: "SET_SCENE_TRANSITION"; sceneId: string; transitionId: string | null; updates: { layerId: string; keyframes: Keyframe[] }[] }
   | { type: "RIPPLE_RETIME"; layerId: string; deltaMs: number }
   | { type: "UNDO" }
   | { type: "REDO" };
@@ -252,6 +265,7 @@ function newAudioTrack(kind: AudioTrackKind): AudioTrack {
     fade_out_ms: 0,
     muted: false,
     solo: false,
+    ducking_enabled: false,
   };
 }
 
@@ -310,6 +324,22 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
       const project = withScene(state.project, state.activeSceneId, (scene) => ({
         ...scene,
         layers: [...scene.layers, ...action.layers],
+      }));
+      return {
+        ...state,
+        ...snapshot(state),
+        project,
+        selectedLayerIds: action.layers.map((l) => l.id),
+        dirty: true,
+      };
+    }
+
+    case "PASTE_LAYERS": {
+      if (action.layers.length === 0) return state;
+      const project = withScene(state.project, state.activeSceneId, (scene) => ({
+        ...scene,
+        layers: [...scene.layers, ...action.layers],
+        connectors: [...(scene.connectors ?? []), ...action.connectors],
       }));
       return {
         ...state,
@@ -601,6 +631,48 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
       return { ...state, ...snapshot(state), project, dirty: true };
     }
 
+    case "MOVE_LAYERS_BATCH": {
+      if (action.updates.length === 0) return state;
+      const updatesMap = new Map(action.updates.map((u) => [u.layerId, u.transform]));
+      const project = withScene(state.project, state.activeSceneId, (scene) => ({
+        ...scene,
+        layers: scene.layers.map((l) => {
+          const patch = updatesMap.get(l.id);
+          if (!patch) return l;
+
+          const animated = new Set(l.keyframes.map((k) => k.property));
+          let nextKeyframes = [...l.keyframes];
+          const toBase: Partial<Transform> = {};
+
+          for (const [key, value] of Object.entries(patch) as [keyof Transform, number][]) {
+            if (value === undefined) continue;
+            const prop = key as AnimatableProperty;
+            if (animated.has(prop)) {
+              nextKeyframes = nextKeyframes.filter(
+                (k) => !(k.property === prop && k.time_ms === action.timeMs),
+              );
+              nextKeyframes.push({
+                id: newId(),
+                time_ms: action.timeMs,
+                property: prop,
+                value,
+                easing: "linear",
+              });
+            } else {
+              toBase[prop] = value;
+            }
+          }
+
+          return {
+            ...l,
+            transform: { ...l.transform, ...toBase },
+            keyframes: nextKeyframes,
+          };
+        }),
+      }));
+      return { ...state, ...snapshot(state), project, dirty: true };
+    }
+
     case "UPDATE_LAYERS_BATCH": {
       // One snapshot for the whole batch — same reasoning as ALIGN_LAYERS
       // and APPLY_KEYFRAMES_BATCH.
@@ -792,6 +864,27 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
       return { ...state, ...snapshot(state), project: { ...state.project, scenes }, dirty: true };
     }
 
+    case "SET_SCENE_TRANSITION": {
+      const scenes = state.project.scenes.map((s) => {
+        if (s.id !== action.sceneId) return s;
+        const updatedLayers = s.layers.map((layer) => {
+          const upd = action.updates.find((u) => u.layerId === layer.id);
+          if (!upd) return layer;
+          if (action.transitionId === null) {
+            // Clearing transition: keep existing keyframes that aren't
+            // transition keyframes. Since we can't distinguish transition
+            // keyframes from user keyframes, clear all keyframes on
+            // updated layers — matching the existing APPLY_KEYFRAMES
+            // behaviour which replaces the full array.
+            return { ...layer, keyframes: [] };
+          }
+          return { ...layer, keyframes: upd.keyframes };
+        });
+        return { ...s, layers: updatedLayers, transition_id: action.transitionId };
+      });
+      return { ...state, ...snapshot(state), project: { ...state.project, scenes }, dirty: true };
+    }
+
     case "DELETE_SCENE": {
       // A project with zero scenes has nothing to render or export —
       // never let the last one be deleted.
@@ -847,6 +940,16 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
     case "TOGGLE_AUDIO_SOLO": {
       const project = withScene(state.project, state.activeSceneId, (scene) =>
         withAudioTrack(scene, action.trackId, (track) => ({ ...track, solo: !track.solo })),
+      );
+      return { ...state, ...snapshot(state), project, dirty: true };
+    }
+
+    case "TOGGLE_AUDIO_DUCKING": {
+      const project = withScene(state.project, state.activeSceneId, (scene) =>
+        withAudioTrack(scene, action.trackId, (track) => ({
+          ...track,
+          ducking_enabled: !track.ducking_enabled,
+        })),
       );
       return { ...state, ...snapshot(state), project, dirty: true };
     }

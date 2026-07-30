@@ -1,5 +1,6 @@
 /**
- * Subtitle import dialog: pick a .srt/.vtt file, pick a style preset ONCE,
+ * Subtitle import dialog: pick a .srt/.vtt file OR auto-generate captions
+ * from a voiceover audio track via Whisper STT, pick a style preset ONCE,
  * see what will actually be generated, import.
  *
  * This component owns no editor state — it hands a finished MotionLayer[]
@@ -14,17 +15,24 @@
  * downgrade note, so the user sees what will land BEFORE it lands.
  */
 
-import { useMemo, useRef, useState } from "react";
-import { X, Captions, Upload, AlertTriangle } from "lucide-react";
-import type { MotionLayer } from "../../types/motion";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { X, Captions, Upload, AlertTriangle, Sparkles, Loader2, Mic } from "lucide-react";
+import type { AudioTrack, MotionLayer } from "../../types/motion";
 import type { SubtitleCue } from "../../types/subtitle";
 import { BUILTIN_PRESETS, DEFAULT_PRESET_ID, getPreset } from "../../subtitle/presets";
 import { parseSubtitles } from "./subtitleParse";
 import { subtitleCuesToLayers } from "./subtitleLayers";
+import {
+  cancelTranscriptionTask,
+  getTranscriptionStatus,
+  startAudioTrackTranscription,
+} from "../../api/motion";
 
 export interface SubtitleImportModalProps {
   isOpen: boolean;
   onClose: () => void;
+  projectId?: string;
+  audioTracks?: AudioTrack[];
   sceneWidth: number;
   sceneHeight: number;
   sceneDurationMs: number;
@@ -32,19 +40,6 @@ export interface SubtitleImportModalProps {
   onInsertLayers: (layers: MotionLayer[]) => void;
 }
 
-/** z-[60], not the z-50 the other editor modals use.
- *
- *  MotionCanvas's "Blank Canvas" empty-scene card is also z-50 and is
- *  rendered AFTER the modals in MotionEditor's tree, so at equal z-index it
- *  paints on top and swallows clicks aimed at the middle of the dialog — on
- *  an empty scene, which is exactly the state a fresh project is in when you
- *  import captions into it. Found by clicking through the built bundle, not
- *  by reading: at z-50 the preset buttons behind the card do not respond.
- *
- *  Fixed here rather than in MotionCanvas because the same collision affects
- *  the Insert / Transition / Export dialogs, that file is shared, and a
- *  cross-cutting z-index change is the lead's call — reported in the chat
- *  log instead of landed quietly. */
 const OVERLAY_CLASS =
   "fixed inset-0 z-[60] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4";
 
@@ -58,12 +53,15 @@ function fmt(seconds: number): string {
 export function SubtitleImportModal({
   isOpen,
   onClose,
+  projectId,
+  audioTracks = [],
   sceneWidth,
   sceneHeight,
   sceneDurationMs,
   onInsertLayers,
 }: SubtitleImportModalProps) {
   const fileRef = useRef<HTMLInputElement>(null);
+  const [mode, setMode] = useState<"file" | "auto">("file");
   const [fileName, setFileName] = useState<string | null>(null);
   const [cues, setCues] = useState<SubtitleCue[]>([]);
   const [warnings, setWarnings] = useState<string[]>([]);
@@ -72,11 +70,28 @@ export function SubtitleImportModal({
   const [includeBackground, setIncludeBackground] = useState(true);
   const [readError, setReadError] = useState<string | null>(null);
 
+  // Auto-caption state
+  const voiceoverTracks = useMemo(
+    () => audioTracks.filter((t) => t.kind === "voiceover" || !t.kind),
+    [audioTracks],
+  );
+  const availableTracks = audioTracks.length > 0 ? audioTracks : [];
+  const [selectedTrackId, setSelectedTrackId] = useState<string>("");
+
+  useEffect(() => {
+    if (audioTracks.length > 0 && !selectedTrackId) {
+      const preferred = voiceoverTracks[0] || audioTracks[0];
+      setSelectedTrackId(preferred.id);
+    }
+  }, [audioTracks, voiceoverTracks, selectedTrackId]);
+
+  const [transcribing, setTranscribing] = useState(false);
+  const [taskId, setTaskId] = useState<string | null>(null);
+  const [transcribeProgress, setTranscribeProgress] = useState(0);
+  const [transcribeError, setTranscribeError] = useState<string | null>(null);
+
   const style = getPreset(presetId);
 
-  // Recomputed on every knob change, so the counts and the preview below are
-  // always the layers the button would actually insert — never a stale
-  // description of a previous setting.
   const result = useMemo(
     () =>
       subtitleCuesToLayers(cues, {
@@ -89,6 +104,67 @@ export function SubtitleImportModal({
       }),
     [cues, style, sceneWidth, sceneHeight, sceneDurationMs, offsetMs, includeBackground],
   );
+
+  // Polling loop for background transcription task
+  useEffect(() => {
+    if (!taskId || !transcribing) return;
+
+    const interval = setInterval(async () => {
+      try {
+        const st = await getTranscriptionStatus(taskId);
+        setTranscribeProgress(st.progress);
+        if (st.done) {
+          clearInterval(interval);
+          setTranscribing(false);
+          setTaskId(null);
+          if (st.status === "done") {
+            setCues(st.cues || []);
+            const trackObj = audioTracks.find((t) => t.id === st.track_id);
+            setFileName(`Auto-captions (${trackObj?.name || "Voiceover"})`);
+            setWarnings([]);
+            setTranscribeError(null);
+          } else if (st.status === "failed") {
+            setTranscribeError(st.error || "Transcription failed.");
+          } else if (st.status === "cancelled") {
+            setTranscribeError("Transcription was cancelled.");
+          }
+        }
+      } catch (err) {
+        clearInterval(interval);
+        setTranscribing(false);
+        setTaskId(null);
+        setTranscribeError(String(err));
+      }
+    }, 500);
+
+    return () => clearInterval(interval);
+  }, [taskId, transcribing, audioTracks]);
+
+  const lowConfidenceWords = useMemo(() => {
+    const list: Array<{ word: string; confidence: number }> = [];
+    for (const cue of cues) {
+      if (cue.words) {
+        for (const w of cue.words) {
+          if (w.confidence !== undefined && w.confidence < 0.7) {
+            list.push({ word: w.text, confidence: w.confidence });
+          }
+        }
+      }
+    }
+    return list;
+  }, [cues]);
+
+  const confidenceWarnings = useMemo(() => {
+    if (lowConfidenceWords.length === 0) return [];
+    const names = lowConfidenceWords
+      .slice(0, 5)
+      .map((w) => `"${w.word}" (${Math.round(w.confidence * 100)}%)`)
+      .join(", ");
+    const extra = lowConfidenceWords.length > 5 ? ` and ${lowConfidenceWords.length - 5} more` : "";
+    return [
+      `${lowConfidenceWords.length} word(s) have low transcription confidence (<70%): ${names}${extra}. Please review these in the generated captions.`,
+    ];
+  }, [lowConfidenceWords]);
 
   if (!isOpen) return null;
 
@@ -109,6 +185,36 @@ export function SubtitleImportModal({
     }
   }
 
+  async function handleStartAutoCaption() {
+    if (!projectId || !selectedTrackId) {
+      setTranscribeError("Missing project ID or audio track selection.");
+      return;
+    }
+    setTranscribeError(null);
+    setTranscribeProgress(0);
+    setTranscribing(true);
+    try {
+      const res = await startAudioTrackTranscription(projectId, selectedTrackId);
+      setTaskId(res.task_id);
+    } catch (err) {
+      setTranscribing(false);
+      setTranscribeError(String(err));
+    }
+  }
+
+  async function handleCancelTranscribe() {
+    if (taskId) {
+      try {
+        await cancelTranscriptionTask(taskId);
+      } catch {
+        // ignore cancellation error
+      }
+    }
+    setTranscribing(false);
+    setTaskId(null);
+    setTranscribeError("Transcription cancelled.");
+  }
+
   function handleImport() {
     if (result.layers.length === 0) return;
     onInsertLayers(result.layers);
@@ -118,10 +224,7 @@ export function SubtitleImportModal({
   const captionCount = result.layers.filter((l) => l.type === "text").length;
 
   return (
-    <div
-      className={OVERLAY_CLASS}
-      onClick={onClose}
-    >
+    <div className={OVERLAY_CLASS} onClick={onClose}>
       <div
         className="bg-surface border border-border rounded-xl shadow-2xl w-full max-w-2xl max-h-[85vh] overflow-hidden flex flex-col"
         onClick={(e) => e.stopPropagation()}
@@ -129,7 +232,7 @@ export function SubtitleImportModal({
         <div className="px-5 py-4 border-b border-border flex items-center justify-between shrink-0">
           <div className="flex items-center gap-2 font-semibold text-base text-text">
             <Captions size={18} className="text-accent" />
-            <span>Import subtitles</span>
+            <span>Subtitles & Captions</span>
           </div>
           <button
             type="button"
@@ -142,31 +245,126 @@ export function SubtitleImportModal({
         </div>
 
         <div className="overflow-y-auto p-5 space-y-5">
-          {/* ── File ── */}
-          <div>
-            <input
-              ref={fileRef}
-              type="file"
-              accept=".srt,.vtt,text/plain"
-              className="hidden"
-              onChange={(e) => {
-                void handleFile(e.target.files?.[0]);
-                // Reset so re-picking the same file after an edit re-reads it.
-                e.target.value = "";
-              }}
-            />
+          {/* Mode Switcher */}
+          <div className="flex border-b border-border gap-6 pb-2">
             <button
               type="button"
-              onClick={() => fileRef.current?.click()}
-              className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-lg border border-dashed border-border hover:border-accent hover:bg-surface-hover text-sm text-text-muted hover:text-text"
+              onClick={() => setMode("file")}
+              className={`flex items-center gap-2 text-xs font-medium pb-1.5 border-b-2 transition-colors ${
+                mode === "file"
+                  ? "border-accent text-accent"
+                  : "border-transparent text-text-muted hover:text-text"
+              }`}
             >
-              <Upload size={16} />
-              {fileName ? `${fileName} — choose a different file` : "Choose a .srt or .vtt file"}
+              <Upload size={14} />
+              Import .SRT / .VTT
             </button>
-            {readError && <p className="mt-2 text-xs text-red-400">{readError}</p>}
+            <button
+              type="button"
+              onClick={() => setMode("auto")}
+              className={`flex items-center gap-2 text-xs font-medium pb-1.5 border-b-2 transition-colors ${
+                mode === "auto"
+                  ? "border-accent text-accent"
+                  : "border-transparent text-text-muted hover:text-text"
+              }`}
+            >
+              <Sparkles size={14} />
+              Auto-Caption Voiceover
+            </button>
           </div>
 
-          {/* ── Style preset: picked once, applied to every caption ── */}
+          {/* ── Source selection ── */}
+          {mode === "file" ? (
+            <div>
+              <input
+                ref={fileRef}
+                type="file"
+                accept=".srt,.vtt,text/plain"
+                className="hidden"
+                onChange={(e) => {
+                  void handleFile(e.target.files?.[0]);
+                  e.target.value = "";
+                }}
+              />
+              <button
+                type="button"
+                onClick={() => fileRef.current?.click()}
+                className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-lg border border-dashed border-border hover:border-accent hover:bg-surface-hover text-sm text-text-muted hover:text-text"
+              >
+                <Upload size={16} />
+                {fileName ? `${fileName} — choose a different file` : "Choose a .srt or .vtt file"}
+              </button>
+              {readError && <p className="mt-2 text-xs text-red-400">{readError}</p>}
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {availableTracks.length === 0 ? (
+                <div className="p-4 rounded-lg border border-border bg-surface-hover text-xs text-text-muted flex items-center gap-2">
+                  <Mic size={16} className="text-accent shrink-0" />
+                  <span>No audio tracks found in this scene. Add a voiceover track first to use auto-captioning.</span>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-xs font-medium text-text-muted">Select Audio Track</label>
+                    <select
+                      value={selectedTrackId}
+                      onChange={(e) => setSelectedTrackId(e.target.value)}
+                      disabled={transcribing}
+                      className="px-3 py-2 rounded-lg bg-surface-hover border border-border text-text text-xs focus:outline-none focus:border-accent"
+                    >
+                      {availableTracks.map((track) => (
+                        <option key={track.id} value={track.id}>
+                          {track.name} {track.kind ? `(${track.kind})` : ""}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {transcribing ? (
+                    <div className="p-4 rounded-lg border border-accent/30 bg-accent/5 space-y-2">
+                      <div className="flex items-center justify-between text-xs font-medium text-text">
+                        <div className="flex items-center gap-2">
+                          <Loader2 size={14} className="animate-spin text-accent" />
+                          <span>Transcribing speech with Whisper STT...</span>
+                        </div>
+                        <span>{Math.round(transcribeProgress)}%</span>
+                      </div>
+                      <div className="w-full h-1.5 bg-surface-hover rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-accent transition-all duration-300"
+                          style={{ width: `${Math.max(5, transcribeProgress)}%` }}
+                        />
+                      </div>
+                      <div className="flex justify-end">
+                        <button
+                          type="button"
+                          onClick={handleCancelTranscribe}
+                          className="text-xs text-red-400 hover:underline"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={handleStartAutoCaption}
+                      disabled={!selectedTrackId || !projectId}
+                      className="flex items-center justify-center gap-2 w-full px-4 py-2.5 rounded-lg font-medium text-xs bg-accent text-white hover:opacity-90 disabled:opacity-40"
+                    >
+                      <Sparkles size={14} />
+                      Generate Captions from Voiceover
+                    </button>
+                  )}
+
+                  {transcribeError && <p className="text-xs text-red-400">{transcribeError}</p>}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ── Style preset ── */}
           <div>
             <div className="text-xs font-medium text-text-muted mb-2">Caption style</div>
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
@@ -215,9 +413,9 @@ export function SubtitleImportModal({
           </div>
 
           {/* ── Warnings and honest notes ── */}
-          {(warnings.length > 0 || result.notes.length > 0) && (
+          {(warnings.length > 0 || result.notes.length > 0 || confidenceWarnings.length > 0) && (
             <div className="rounded-lg border border-amber-500/40 bg-amber-500/5 p-3 space-y-1">
-              {[...warnings, ...result.notes].map((w, i) => (
+              {[...warnings, ...confidenceWarnings, ...result.notes].map((w, i) => (
                 <div key={i} className="flex gap-2 text-xs text-amber-300/90">
                   <AlertTriangle size={13} className="shrink-0 mt-0.5" />
                   <span>{w}</span>
@@ -237,14 +435,27 @@ export function SubtitleImportModal({
                 {result.layers
                   .filter((l) => l.type === "text")
                   .slice(0, 12)
-                  .map((l) => (
-                    <div key={l.id} className="px-3 py-2 flex gap-3 text-xs">
-                      <span className="font-mono text-text-faint shrink-0">
-                        {fmt((l.visible_start_ms ?? 0) / 1000)} → {fmt((l.visible_end_ms ?? 0) / 1000)}
-                      </span>
-                      <span className="text-text whitespace-pre-wrap">{l.text?.text}</span>
-                    </div>
-                  ))}
+                  .map((l) => {
+                    const hasLowConf = lowConfidenceWords.some((w) => l.text?.text.includes(w.word));
+                    return (
+                      <div key={l.id} className="px-3 py-2 flex items-center justify-between gap-3 text-xs">
+                        <div className="flex gap-3 items-center">
+                          <span className="font-mono text-text-faint shrink-0">
+                            {fmt((l.visible_start_ms ?? 0) / 1000)} → {fmt((l.visible_end_ms ?? 0) / 1000)}
+                          </span>
+                          <span className="text-text whitespace-pre-wrap">{l.text?.text}</span>
+                        </div>
+                        {hasLowConf && (
+                          <span
+                            title="Contains word(s) with low STT confidence (<70%)"
+                            className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-500/20 text-amber-300 shrink-0"
+                          >
+                            Check text
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })}
                 {captionCount > 12 && (
                   <div className="px-3 py-2 text-xs text-text-faint">…and {captionCount - 12} more</div>
                 )}

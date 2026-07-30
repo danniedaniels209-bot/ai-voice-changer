@@ -321,6 +321,10 @@ export interface AudioTrack {
   solo: boolean;
   /** Optional markers on the audio track for syncing animation to speech/beats. */
   markers?: AudioMarker[];
+  /** LT-AUDIODUCK: only meaningful on a music/sfx track. See models.py's
+   *  AudioTrack.ducking_enabled for what it does at export time — this is
+   *  just the on/off switch the UI shows. */
+  ducking_enabled?: boolean;
 }
 
 export interface MotionLayer {
@@ -444,6 +448,12 @@ export interface MotionScene {
    *  deserialises unchanged and no layer-factory call site has to spell
    *  out `connectors: []`. */
   connectors?: MotionConnector[];
+  /** The entrance transition for this scene. A null/undefined value means
+   *  no transition — the previous scene cuts directly to this one. The
+   *  transition keyframes themselves are generated and stored on each
+   *  layer via applyTransitionToScene at the time the transition is picked;
+   *  this field is a reference so the picker can show what's active. */
+  transition_id?: string | null;
 }
 
 export interface MotionProject {

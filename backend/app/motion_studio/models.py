@@ -230,6 +230,14 @@ class AudioTrack(BaseModel):
     muted: bool = False
     solo: bool = False
     markers: list[AudioMarker] = Field(default_factory=list)
+    # LT-AUDIODUCK: only meaningful on a music/sfx track. When true, export
+    # computes this track's effective volume as a function of the OTHER
+    # voiceover track(s) in the same scene (see export_service.py's
+    # _duck_volume_expr) rather than baking anything into volume_keyframes —
+    # a keyframed curve the user drew by hand and an automatic ducking
+    # envelope must not fight each other or silently overwrite one another.
+    # Defaulted False so every existing project's mix is unchanged.
+    ducking_enabled: bool = False
 
 
 class GradientStop(BaseModel):
@@ -370,6 +378,12 @@ class MotionScene(BaseModel):
     # scene-level list mirrors how audio_tracks already work. Defaulted so
     # existing project JSON deserialises unchanged.
     connectors: list[MotionConnector] = Field(default_factory=list)
+    # Entrance transition for this scene (id from TRANSITION_DEFINITIONS).
+    # Null/None = no transition (cut from previous scene). The actual
+    # transition keyframes are generated and applied to layers at the
+    # time the transition is picked; this is a reference so the UI can
+    # show what's active. Default None so existing projects are unaffected.
+    transition_id: str | None = None
 
 
 class MotionProject(BaseModel):

@@ -100,6 +100,7 @@ export function AudioTrackPanel({
   onRename,
   onToggleMute,
   onToggleSolo,
+  onToggleDucking,
   onVolumeChange,
   onDelete,
   onAddTrack,
@@ -258,6 +259,30 @@ export function AudioTrackPanel({
                 >
                   <Zap size={13} />
                 </button>
+
+                {/* LT-AUDIODUCK: only music/sfx tracks can duck — a
+                    voiceover ducking under itself is meaningless, and the
+                    export pipeline never treats a voiceover track as a
+                    ducking TARGET. */}
+                {track.kind !== "voiceover" && onToggleDucking && (
+                  <button
+                    type="button"
+                    title={
+                      track.ducking_enabled
+                        ? "Ducking ON — this track quiets down under voice-over lines"
+                        : "Duck under voice-over — automatically lower this track's volume whenever a voice-over line plays"
+                    }
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onToggleDucking(track.id);
+                    }}
+                    className={`p-1 rounded hover:bg-surface-hover transition-colors ${
+                      track.ducking_enabled ? "text-blue-400" : "text-text-faint hover:text-text"
+                    }`}
+                  >
+                    <Mic size={13} />
+                  </button>
+                )}
 
                 <input
                   type="range"

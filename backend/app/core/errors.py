@@ -55,6 +55,12 @@ class TranscriptionError(AppError):
     status_code = 422
 
 
+class TranscriptionCancelledError(AppError):
+    code = "transcription_cancelled"
+    status_code = 409
+
+
+
 class SynthesisError(AppError):
     code = "synthesis_failed"
     status_code = 502  # edge-tts is a remote service; failures are usually network-side

@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from app.core.config import get_settings
-from app.core.errors import TranscriptionError
+from app.core.errors import TranscriptionCancelledError, TranscriptionError
 from app.core.logging import get_logger
 
 logger = get_logger(__name__)
@@ -90,6 +90,7 @@ def transcribe(
     audio_path: Path,
     device: str,
     progress_callback=None,
+    cancel_event: threading.Event | None = None,
 ) -> list[SpeechSegment]:
     """
     Transcribes `audio_path` into timestamped segments. `progress_callback`
@@ -125,6 +126,8 @@ def transcribe(
     total = info.duration or 1.0
     segments: list[SpeechSegment] = []
     for seg in segments_iter:
+        if cancel_event and cancel_event.is_set():
+            raise TranscriptionCancelledError("Speech transcription was cancelled.")
         text = seg.text.strip()
         if not text:
             continue

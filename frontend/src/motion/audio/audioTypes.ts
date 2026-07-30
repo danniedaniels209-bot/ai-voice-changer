@@ -20,6 +20,10 @@ export interface AudioTrackPanelProps {
   onRename: (trackId: string, name: string) => void;
   onToggleMute: (trackId: string) => void;
   onToggleSolo: (trackId: string) => void;
+  /** LT-AUDIODUCK. Optional so this file doesn't force every caller to wire
+   *  it before the feature has a UI anywhere — same convention as the
+   *  Inspector's LT-CAPTIONSTYLE props. */
+  onToggleDucking?: (trackId: string) => void;
   onVolumeChange: (trackId: string, volume: number) => void;
   onDelete: (trackId: string) => void;
   onAddTrack: (kind: AudioTrackKind) => void;

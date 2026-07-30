@@ -144,3 +144,29 @@ export function listMotionAssets(): Promise<MotionAsset[]> {
 export function deleteMotionAsset(assetId: string): Promise<{ deleted: boolean }> {
   return apiDelete<{ deleted: boolean }>(`/motion/assets/${assetId}`);
 }
+
+export interface TranscriptionTaskStatus {
+  task_id: string;
+  project_id: string;
+  track_id: string;
+  status: "queued" | "transcribing" | "done" | "failed" | "cancelled";
+  done: boolean;
+  progress: number;
+  cues: import("../types/subtitle").SubtitleCue[];
+  error: string | null;
+}
+
+export function startAudioTrackTranscription(
+  projectId: string,
+  trackId: string,
+): Promise<{ task_id: string }> {
+  return apiPost<{ task_id: string }>(`/motion/projects/${projectId}/tracks/${trackId}/transcribe`);
+}
+
+export function getTranscriptionStatus(taskId: string): Promise<TranscriptionTaskStatus> {
+  return apiGet<TranscriptionTaskStatus>(`/motion/transcribe/${taskId}`);
+}
+
+export function cancelTranscriptionTask(taskId: string): Promise<TranscriptionTaskStatus> {
+  return apiDelete<TranscriptionTaskStatus>(`/motion/transcribe/${taskId}`);
+}
