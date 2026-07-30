@@ -65,6 +65,14 @@ export type EditorAction =
   // ALIGN_LAYERS: one user action, one undo step.
   | { type: "APPLY_KEYFRAMES_BATCH"; updates: { layerId: string; keyframes: Keyframe[] }[] }
   | { type: "ALIGN_LAYERS"; updates: { layerId: string; transform: Transform }[] }
+  // LT-CAPTIONSTYLE: plural UPDATE_LAYER, same reasoning as
+  // APPLY_KEYFRAMES_BATCH — restyling every caption from one subtitle
+  // import should be one undo step, not one per layer. Generic (not
+  // subtitle-specific): any feature that needs to patch several layers'
+  // non-transform fields at once can use this instead of ALIGN_LAYERS
+  // (transform-only) or dispatching UPDATE_LAYER in a loop (one snapshot
+  // per layer).
+  | { type: "UPDATE_LAYERS_BATCH"; updates: { layerId: string; patch: Partial<MotionLayer> }[] }
   // LT-TIMELINE: per-layer scene-time visibility window. Retime = drag the
   // bar body (shifts both ends by deltaMs, preserving length). Trim =
   // drag a handle (sets start/end independently; passing null clears that
@@ -101,6 +109,7 @@ export type EditorAction =
   // everything after the affected region. Both take ONE undo snapshot.
   | { type: "RIPPLE_DELETE" }
   | { type: "RIPPLE_TRIM"; layerId: string; endMs: number }
+  | { type: "RIPPLE_RETIME"; layerId: string; deltaMs: number }
   | { type: "UNDO" }
   | { type: "REDO" };
 
@@ -592,6 +601,31 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
       return { ...state, ...snapshot(state), project, dirty: true };
     }
 
+    case "UPDATE_LAYERS_BATCH": {
+      // One snapshot for the whole batch — same reasoning as ALIGN_LAYERS
+      // and APPLY_KEYFRAMES_BATCH.
+      if (action.updates.length === 0) return state;
+      const scene = activeScene(state.project, state.activeSceneId);
+      // Same cycle guard UPDATE_LAYER applies, extended to a batch: drop any
+      // single update that would make a layer its own ancestor rather than
+      // failing the whole batch for one bad entry.
+      const patchById = new Map(
+        action.updates
+          .filter(
+            (u) =>
+              !("parent_id" in u.patch) ||
+              !wouldCreateCycle(scene.layers, u.layerId, u.patch.parent_id ?? null),
+          )
+          .map((u) => [u.layerId, u.patch]),
+      );
+      if (patchById.size === 0) return state;
+      const project = withScene(state.project, state.activeSceneId, (sc) => ({
+        ...sc,
+        layers: sc.layers.map((l) => (patchById.has(l.id) ? { ...l, ...patchById.get(l.id)! } : l)),
+      }));
+      return { ...state, ...snapshot(state), project, dirty: true };
+    }
+
     case "RETIME_LAYER": {
       // Drag the bar body: shift both ends by the same delta, preserving
       // length. A layer with null visible_start_ms / visible_end_ms is
@@ -649,6 +683,41 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
               visible_start_ms: ls + delta,
               visible_end_ms: le + delta,
               keyframes: l.keyframes.map((k) => ({ ...k, time_ms: k.time_ms + delta })),
+            };
+          }
+          return l;
+        }),
+      }));
+      return { ...state, ...snapshot(state), project, dirty: true };
+    }
+
+    case "RIPPLE_RETIME": {
+      const rrScene = activeScene(state.project, state.activeSceneId);
+      const rrTarget = rrScene.layers.find((l) => l.id === action.layerId);
+      if (!rrTarget) return state;
+      const rrOrigStart = rrTarget.visible_start_ms ?? 0;
+      const rrOrigEnd = rrTarget.visible_end_ms ?? rrScene.duration_ms;
+      const rrNewStart = rrOrigStart + action.deltaMs;
+      if (rrNewStart < 0) return state;
+      const rrNewEnd = rrOrigEnd + action.deltaMs;
+      const project = withScene(state.project, state.activeSceneId, (sc) => ({
+        ...sc,
+        layers: sc.layers.map((l) => {
+          if (l.id === action.layerId) {
+            return {
+              ...l,
+              visible_start_ms: rrNewStart,
+              visible_end_ms: rrNewEnd,
+              keyframes: l.keyframes.map((k) => ({ ...k, time_ms: k.time_ms + action.deltaMs })),
+            };
+          }
+          const ls = l.visible_start_ms ?? 0;
+          if (ls >= rrOrigStart) {
+            return {
+              ...l,
+              visible_start_ms: ls + action.deltaMs,
+              visible_end_ms: (l.visible_end_ms ?? sc.duration_ms) + action.deltaMs,
+              keyframes: l.keyframes.map((k) => ({ ...k, time_ms: k.time_ms + action.deltaMs })),
             };
           }
           return l;

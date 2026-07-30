@@ -25,6 +25,12 @@
  * rendered as "line" and the caller is told so (see MODE_NOTES). Faking
  * them by splitting the line into one layer per word would break the line's
  * layout, which is worse than an honest downgrade.
+ *
+ * GROUPING (LT-CAPTIONSTYLE): every layer this function emits gets the same
+ * import's group tag appended to its name via subtitleGroup.ts, so a later
+ * edit (batch restyle, group reposition) can find "every other layer from
+ * this import" without a new model field. See subtitleGroup.ts for why that
+ * isn't `parent_id`.
  */
 
 import type { MotionLayer, Keyframe } from "../../types/motion";
@@ -32,6 +38,7 @@ import type { SubtitleCue, SubtitleStyle } from "../../types/subtitle";
 import { effectiveWords } from "../../subtitle/timing";
 import { DEFAULT_CHAR_WIDTH_FACTOR, lineHeight, wrapTextToLines } from "../textWrap";
 import { newId } from "../state";
+import { withGroupTag } from "./subtitleGroup";
 
 /** The canvas size the subtitle engine's style numbers (font_size, margin,
  *  padding, stroke width) are expressed at — see TextStyle.font_size in
@@ -189,6 +196,10 @@ export function subtitleCuesToLayers(
   const layers: MotionLayer[] = [];
   const notes: string[] = [];
   let dropped = 0;
+  // One id per IMPORT (this whole function call), not per caption — every
+  // layer this call produces shares it, which is what makes "all captions
+  // from this import" a well-defined set later.
+  const groupId = newId();
 
   const modeNote = MODE_NOTES[style.word_mode];
   if (modeNote) notes.push(modeNote);
@@ -218,7 +229,7 @@ export function subtitleCuesToLayers(
         const bandHeight = blockHeight + padY * 2;
         layers.push({
           id: newId(),
-          name: `Caption BG ${layers.length + 1}`,
+          name: withGroupTag(`Caption BG ${layers.length + 1}`, groupId),
           type: "rect",
           transform: {
             x: (sceneWidth - bandWidth) / 2,
@@ -253,7 +264,10 @@ export function subtitleCuesToLayers(
 
       layers.push({
         id: newId(),
-        name: `Caption: ${unit.text.slice(0, 24)}${unit.text.length > 24 ? "…" : ""}`,
+        name: withGroupTag(
+          `Caption: ${unit.text.slice(0, 24)}${unit.text.length > 24 ? "…" : ""}`,
+          groupId,
+        ),
         type: "text",
         transform: {
           x: boxX,

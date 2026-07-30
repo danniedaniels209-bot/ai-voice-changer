@@ -7,10 +7,11 @@
  * canvas's move/resize drags: one commit per gesture, not one per pixel.
  */
 
-import { useRef, useState } from "react";
+import { useRef, useState, useCallback } from "react";
 import { Play, Pause, SkipBack, SkipForward, ZoomIn, ZoomOut, ChevronDown, Link, Link2Off } from "lucide-react";
 import type { MotionScene, AudioTrack, SceneMarker } from "../types/motion";
 import { Waveform } from "./audio/WaveformCanvas";
+import { findSnap } from "./timeline/snapping";
 
 interface TimelineProps {
   /** Optional — collapse the timeline to a header bar. Optional so the
@@ -93,6 +94,7 @@ export function Timeline({
   const [dragMarkerPreviewMs, setDragMarkerPreviewMs] = useState<number | null>(null);
   const barDrag = useRef<BarDrag | null>(null);
   const [barPreview, setBarPreview] = useState<{ start: number; end: number } | null>(null);
+  const [snapLineMs, setSnapLineMs] = useState<number | null>(null);
 
   function msToPx(ms: number): number {
     return (ms / 1000) * pxPerSec;
@@ -149,29 +151,42 @@ export function Timeline({
   function handleMouseMove(e: React.MouseEvent) {
     const rect = trackRef.current!.getBoundingClientRect();
     const cursorMs = pxToMs(e.clientX - rect.left);
+    const snapTargets = e.altKey ? [] : buildSnapTargets();
 
     if (dragKeyframe.current) {
-      setDragPreviewMs(cursorMs);
+      const snapped = findSnap(cursorMs, snapTargets, pxPerSec);
+      setDragPreviewMs(snapped ?? cursorMs);
+      setSnapLineMs(snapped);
       return;
     }
     if (dragMarker.current) {
-      setDragMarkerPreviewMs(cursorMs);
+      const snapped = findSnap(cursorMs, snapTargets, pxPerSec);
+      setDragMarkerPreviewMs(snapped ?? cursorMs);
+      setSnapLineMs(snapped);
       return;
     }
     const drag = barDrag.current;
     if (!drag) return;
 
     if (drag.mode === "body") {
-      const newStart = cursorMs - drag.grabOffsetMs;
+      const rawStart = cursorMs - drag.grabOffsetMs;
       const len = drag.end - drag.start;
+      const snapped = findSnap(rawStart, snapTargets, pxPerSec);
+      const newStart = snapped ?? rawStart;
       setBarPreview({ start: newStart, end: newStart + len });
+      setSnapLineMs(snapped);
     } else if (drag.mode === "start") {
-      // Don't let the start handle cross the end handle.
-      const newStart = Math.min(cursorMs, drag.end - (BAR_MIN_WIDTH_PX / pxPerSec) * 1000);
+      const raw = Math.min(cursorMs, drag.end - (BAR_MIN_WIDTH_PX / pxPerSec) * 1000);
+      const snapped = findSnap(raw, snapTargets, pxPerSec);
+      const newStart = snapped ?? raw;
       setBarPreview({ start: newStart, end: drag.end });
+      setSnapLineMs(snapped);
     } else {
-      const newEnd = Math.max(cursorMs, drag.start + (BAR_MIN_WIDTH_PX / pxPerSec) * 1000);
+      const raw = Math.max(cursorMs, drag.start + (BAR_MIN_WIDTH_PX / pxPerSec) * 1000);
+      const snapped = findSnap(raw, snapTargets, pxPerSec);
+      const newEnd = snapped ?? raw;
       setBarPreview({ start: drag.start, end: newEnd });
+      setSnapLineMs(snapped);
     }
   }
 
@@ -202,6 +217,7 @@ export function Timeline({
     }
     barDrag.current = null;
     setBarPreview(null);
+    setSnapLineMs(null);
   }
 
   const durationSec = scene.duration_ms / 1000;
@@ -213,6 +229,21 @@ export function Timeline({
   // the app playing something that doesn't exist. Audio counts as content —
   // a voiceover-only scene is legitimate and should be playable.
   const isEmpty = scene.layers.length === 0 && scene.audio_tracks.length === 0;
+
+  const buildSnapTargets = useCallback((): number[] => {
+    const targets: number[] = [0, scene.duration_ms, playheadMs];
+    for (const l of scene.layers) {
+      targets.push(l.visible_start_ms ?? 0);
+      targets.push(l.visible_end_ms ?? scene.duration_ms);
+    }
+    if (scene.markers) {
+      for (const m of scene.markers) targets.push(m.time_ms);
+    }
+    if (activeAudioTrack?.markers) {
+      for (const m of activeAudioTrack.markers) targets.push(m.time_ms);
+    }
+    return targets;
+  }, [scene, playheadMs, activeAudioTrack]);
 
   return (
     <div className="flex flex-col h-full">
@@ -361,6 +392,13 @@ export function Timeline({
 
           {/* Layer rows */}
           <div className="relative">
+            {/* Snap guide line — shown while the user drags near a snap target */}
+            {snapLineMs !== null && (
+              <div
+                className="absolute top-0 w-px bg-yellow-400/80 pointer-events-none z-20"
+                style={{ left: msToPx(snapLineMs), height: scene.layers.length * ROW_HEIGHT || ROW_HEIGHT }}
+              />
+            )}
             {activeAudioTrack && (
               <div 
                 className="absolute top-0 bottom-0 pointer-events-none opacity-20 overflow-hidden z-0" 

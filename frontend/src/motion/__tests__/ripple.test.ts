@@ -119,3 +119,44 @@ describe("RIPPLE_TRIM", () => {
     expect(after.B[0]).toBeGreaterThanOrEqual(after.A[1]);
   });
 });
+
+describe("RIPPLE_RETIME", () => {
+  it("shifts the layer and everything after it by the same delta", () => {
+    const s = stateWith([layer("A", 1000, 2000), layer("B", 3000, 4000)], []);
+    const next = editorReducer(s, { type: "RIPPLE_RETIME", layerId: "A", deltaMs: 500 });
+    expect(spans(next)).toEqual({ A: [1500, 2500], B: [3500, 4500] });
+  });
+
+  it("leaves layers before the target alone (negative delta)", () => {
+    const s = stateWith([layer("A", 0, 1000), layer("B", 2000, 3000), layer("C", 4000, 5000)], []);
+    const next = editorReducer(s, { type: "RIPPLE_RETIME", layerId: "B", deltaMs: -200 });
+    expect(spans(next)).toEqual({ A: [0, 1000], B: [1800, 2800], C: [3800, 4800] });
+  });
+
+  it("preserves start >= 0 (clamp)", () => {
+    const s = stateWith([layer("A", 100, 1000), layer("B", 2000, 3000)], []);
+    const next = editorReducer(s, { type: "RIPPLE_RETIME", layerId: "A", deltaMs: -200 });
+    expect(next).toBe(s); // unchanged — newStart = -100
+  });
+
+  it("shifts keyframes on the target and ripple-shifted layers", () => {
+    const s = stateWith(
+      [
+        { ...layer("A", 1000, 2000), keyframes: [{ id: "k1", property: "x", time_ms: 1500, value: 100, easing: "linear" }] },
+        { ...layer("B", 3000, 4000), keyframes: [{ id: "k2", property: "x", time_ms: 3500, value: 200, easing: "linear" }] },
+      ],
+      [],
+    );
+    const next = editorReducer(s, { type: "RIPPLE_RETIME", layerId: "A", deltaMs: 500 });
+    const a = next.project.scenes[0].layers.find((l) => l.id === "A")!;
+    const b = next.project.scenes[0].layers.find((l) => l.id === "B")!;
+    expect(a.keyframes[0].time_ms).toBe(2000);
+    expect(b.keyframes[0].time_ms).toBe(4000);
+  });
+
+  it("takes exactly one undo snapshot", () => {
+    const s = stateWith([layer("A", 1000, 2000), layer("B", 3000, 4000)], []);
+    const next = editorReducer(s, { type: "RIPPLE_RETIME", layerId: "A", deltaMs: 500 });
+    expect(next.past.length).toBe(1);
+  });
+});

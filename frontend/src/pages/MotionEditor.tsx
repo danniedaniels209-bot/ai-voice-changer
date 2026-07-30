@@ -130,6 +130,20 @@ export function MotionEditor() {
   // Same stale-closure problem as playbackRef: the keydown effect binds once.
   const selectionRef = useRef<string[]>([]);
   const rippleModeRef = useRef(false);
+  const isPlayingRef = useRef(false);
+  const selectedLayerStartRef = useRef<number | null>(null);
+  // Keyboard nudge (LT-KEYBOARDNUDGE) needs the TRUE, unrounded offset
+  // accumulated since the layer was selected — FRAME_STEP_MS is 1000/30 =
+  // 33.333..., and rounding it independently on every keypress drifts: five
+  // presses of Math.round(33.333) sum to 165ms, not the 167ms that rounding
+  // the total once gives. Track the exact float total in trueAccum and the
+  // integer amount already sent to the reducer in dispatchedSoFar; each
+  // press's delta is the difference between the newly-rounded total and
+  // what was dispatched last time, so the SUM of every dispatched delta
+  // always equals Math.round(trueAccum) — no compounding error, and the
+  // reducer only ever sees whole milliseconds (visible_start_ms is `int` on
+  // the backend, so a fractional delta would fail to save once accumulated).
+  const nudgeAccumRef = useRef({ layerId: null as string | null, trueAccum: 0, dispatchedSoFar: 0 });
   // LT-PANELS drag state. These live HERE, with the other refs, and not down
   // beside their handlers — there are `Loading…` / error early returns further
   // down, so a hook declared after them doesn't run on the first render and
@@ -230,13 +244,41 @@ export function MotionEditor() {
         e.preventDefault();
         playbackRef.current.toggle();
       } else if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
-        // Frame stepping. Shift jumps a second at a time for coarse seeking.
-        e.preventDefault();
-        const step = e.shiftKey ? 1000 : FRAME_STEP_MS;
-        const delta = e.key === "ArrowLeft" ? -step : step;
-        const { playheadMs, durationMs } = playbackRef.current;
-        const next = Math.min(durationMs, Math.max(0, playheadMs + delta));
-        dispatch({ type: "SET_PLAYHEAD", timeMs: Math.round(next) });
+        // With a layer selected (and not playing), nudge the layer's whole
+        // span by one frame (Shift = 10 frames). Otherwise step the playhead.
+        const selectedId = selectionRef.current[0];
+        const start = selectedLayerStartRef.current;
+        if (selectedId && start !== null && !isPlayingRef.current) {
+          e.preventDefault();
+          const step = e.shiftKey ? 10 * FRAME_STEP_MS : FRAME_STEP_MS;
+          const rawStep = e.key === "ArrowLeft" ? -step : step;
+
+          const accum = nudgeAccumRef.current;
+          if (accum.layerId !== selectedId) {
+            // Different layer than the last nudge (or the first nudge ever)
+            // — start the true-offset accumulator fresh from here.
+            accum.layerId = selectedId;
+            accum.trueAccum = 0;
+            accum.dispatchedSoFar = 0;
+          }
+          accum.trueAccum += rawStep;
+          const roundedTotal = Math.round(accum.trueAccum);
+          const deltaMs = roundedTotal - accum.dispatchedSoFar;
+
+          if (start + deltaMs < 0) return;
+          accum.dispatchedSoFar = roundedTotal;
+
+          const ripple = rippleModeRef.current;
+          dispatch({ type: ripple ? "RIPPLE_RETIME" : "RETIME_LAYER", layerId: selectedId, deltaMs });
+        } else {
+          // Frame stepping. Shift jumps a second at a time for coarse seeking.
+          e.preventDefault();
+          const step = e.shiftKey ? 1000 : FRAME_STEP_MS;
+          const delta = e.key === "ArrowLeft" ? -step : step;
+          const { playheadMs, durationMs } = playbackRef.current;
+          const next = Math.min(durationMs, Math.max(0, playheadMs + delta));
+          dispatch({ type: "SET_PLAYHEAD", timeMs: Math.round(next) });
+        }
       } else if (e.key === "Home" || e.key === "End") {
         e.preventDefault();
         dispatch({
@@ -262,7 +304,12 @@ export function MotionEditor() {
     dispatch({ type: "SET_PLAYHEAD", timeMs: ms }),
   );
   selectionRef.current = state.selectedLayerIds;
+  isPlayingRef.current = playback.isPlaying;
   rippleModeRef.current = rippleMode;
+  const selectedId = state.selectedLayerIds[0];
+  selectedLayerStartRef.current = selectedId && scene
+    ? (scene.layers.find((l) => l.id === selectedId)?.visible_start_ms ?? null)
+    : null;
   // Transport keys are disabled on an empty scene for the same reason the
   // timeline's buttons are — nothing to play, so Space shouldn't sweep a
   // playhead over a blank canvas.
@@ -818,6 +865,9 @@ export function MotionEditor() {
                 patch: { easing_bezier },
               });
             }}
+            sceneLayers={activeScene.layers}
+            onBatchUpdateLayers={(updates) => dispatch({ type: "UPDATE_LAYERS_BATCH", updates })}
+            onAlignLayers={(updates) => dispatch({ type: "ALIGN_LAYERS", updates })}
           />
         </div>
       </div>
