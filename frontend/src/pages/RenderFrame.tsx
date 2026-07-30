@@ -13,6 +13,7 @@ import type {
 } from "../types/motion";
 import { cropInset, isLayerVisibleAt, videoSourceTimeMs } from "../types/motion";
 import { ease } from "../motion/easing";
+import { colorGradeFilterId, isIdentityColorGrade, renderColorGradeFilter } from "../motion/colorgrade/colorGrade";
 import type { GradientFill } from "../motion/gradients/gradientTypes";
 import type { ShadowEffect } from "../motion/shadowfx/shadowTypes";
 import { lineHeight, wrapTextToLines } from "../motion/textWrap";
@@ -362,9 +363,13 @@ function renderLayer(layer: MotionLayer, timeMs: number, sceneDurationMs: number
       );
     }
 
-    // Apply blur first (inner), then shadow (outer), so feDropShadow
-    // receives the already-blurred shape.
+    // Order: grade, then blur, then shadow — same order and same reasoning
+    // as MotionCanvas.tsx; must match exactly or a graded layer previews
+    // one way and exports another.
     let filteredShape: React.ReactNode = shape;
+    if (!isIdentityColorGrade(layer.color_grade)) {
+      filteredShape = <g filter={`url(#${colorGradeFilterId(layer.id)})`}>{filteredShape}</g>;
+    }
     if (t.blur > 0) {
       filteredShape = <g filter={`url(#${layer.id}-blur)`}>{filteredShape}</g>;
     }
@@ -413,32 +418,20 @@ export function RenderFrame() {
       return;
     }
 
+    // Per-video async poll: set currentTime, then poll until seeking is done
+    // and the time is within tolerance. Polls via setTimeout chunks (10 ms
+    // intervals) rather than requestAnimationFrame — in headless Chromium
+    // rAF fires erratically or not at all when the page isn't compositing
+    // (it's a render-frame page that publishes a data- attribute, not a
+    // compositing canvas), and the rAF starvation was the leading suspect
+    // for why the previous rAF-based fix hung at frame 36.
+    //
+    // The DOM `seeked` event is still registered as a fast path: if it
+    // fires, the poll exits immediately (beating the 10 ms interval).
+    // In practice `seeked` never fires in headless, but keeping it costs
+    // nothing and future Chromium builds may change that behaviour.
     const seekPromises = videos.map((video) => {
       return new Promise<void>((resolve) => {
-        let resolved = false;
-        const timer = setTimeout(() => {
-          if (!resolved) {
-            resolved = true;
-            console.warn("Video seek timed out for", video.src);
-            resolve();
-          }
-        }, 500);
-
-        const onDone = () => {
-          if (!resolved) {
-            resolved = true;
-            clearTimeout(timer);
-            video.removeEventListener("seeked", onDone);
-            resolve();
-          }
-        };
-
-        // This effect works off the DOM rather than the scene graph (it has
-        // to address the real <video> elements), so it reads the layer's
-        // video props back out of data-* attributes and then runs them
-        // through videoSourceTimeMs — the SAME mapping the editor canvas
-        // uses. Do not reimplement the arithmetic here; the two copies had
-        // already drifted once (visible_start was applied on this side only).
         const freeze = video.getAttribute("data-freeze");
         const speedAttr = video.getAttribute("data-speed");
         let speedKeyframes: SpeedKeyframe[] = [];
@@ -446,8 +439,6 @@ export function RenderFrame() {
           try {
             speedKeyframes = JSON.parse(speedAttr);
           } catch {
-            // A malformed ramp must not abort the whole export — fall back to
-            // the constant rate and let the frame render.
             console.warn("unreadable speed ramp on a video layer; using playback_rate");
           }
         }
@@ -464,12 +455,52 @@ export function RenderFrame() {
             parseFloat(video.getAttribute("data-visible-start") || "0"),
           ) / 1000;
 
-        if (Math.abs(video.currentTime - targetTime_s) > 0.01) {
-          video.addEventListener("seeked", onDone);
-          video.currentTime = targetTime_s;
-        } else {
-          onDone();
+        // Already at the target time — no seek needed.
+        if (Math.abs(video.currentTime - targetTimeMs) <= 0.01) {
+          resolve();
+          return;
         }
+
+        let resolved = false;
+        let pollHandle: ReturnType<typeof setInterval> | null = null;
+
+        const onSeeked = () => {
+          if (resolved) return;
+          resolved = true;
+          video.removeEventListener("seeked", onSeeked);
+          if (pollHandle !== null) clearInterval(pollHandle);
+          resolve();
+        };
+
+        video.addEventListener("seeked", onSeeked);
+
+        // Safety timeout: if neither poll nor seeked ever resolves, abort
+        // at 2s so the export doesn't hang on a single degenerate frame.
+        const timeout = setTimeout(() => {
+          if (resolved) return;
+          resolved = true;
+          console.warn("Video seek timed out for", video.currentSrc);
+          video.removeEventListener("seeked", onSeeked);
+          if (pollHandle !== null) clearInterval(pollHandle);
+          resolve();
+        }, 2000);
+
+        pollHandle = setInterval(() => {
+          if (resolved) return;
+          // Seeking may have resolved already (ran above), but it's still
+          // processing — readyState < 2 means the browser hasn't decoded
+          // enough data to render at all.
+          if (!video.seeking && video.readyState >= 2) {
+            // Verify the seek actually landed at the requested time.
+            // A deviation > 0.1s means the browser possibly went stale.
+            if (Math.abs(video.currentTime - targetTimeMs) <= 0.1) {
+              clearTimeout(timeout);
+              onSeeked();
+            }
+          }
+        }, 10);
+
+        video.currentTime = targetTimeMs;
       });
     });
 
@@ -550,6 +581,9 @@ export function RenderFrame() {
                 {layer.gradient ? renderGradientDef(layer.id, layer.gradient) : null}
                 {layer.shadow ? renderShadowFilter(layer.id, layer.shadow) : null}
                 {t.blur > 0 ? renderBlurFilter(layer.id, t.blur) : null}
+                {!isIdentityColorGrade(layer.color_grade)
+                  ? renderColorGradeFilter(layer.id, layer.color_grade!)
+                  : null}
               </Fragment>
             );
           })}

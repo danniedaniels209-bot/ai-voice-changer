@@ -25,6 +25,15 @@ export type EasingType =
   | "overshoot"
   | "custom";
 
+/** Brightness/contrast/saturation/hue adjustment for a layer. See
+ *  MotionLayer.color_grade and colorGrade.ts. */
+export interface ColorGrade {
+  brightness: number;
+  contrast: number;
+  saturation: number;
+  hue_deg: number;
+}
+
 export interface SceneMarker {
   id: string;
   time_ms: number;
@@ -350,6 +359,11 @@ export interface MotionLayer {
    *  the shape in an SVG <filter><feDropShadow>. glow=true means centered
    *  glow (offset 0,0); glow=false means offset drop shadow. */
   shadow?: ShadowEffect | null;
+  /** Optional brightness/contrast/saturation/hue adjustment. Identity values
+   *  (1,1,1,0) — the defaults — render byte-identical to no grade at all.
+   *  Built into a single SVG <filter> by colorGrade.ts, the one definition
+   *  all three renderers share. */
+  color_grade?: ColorGrade | null;
 
   /** Optional scene-time visibility window. A layer is rendered only during
    *  [visible_start_ms ?? 0, visible_end_ms ?? scene.duration_ms). null on

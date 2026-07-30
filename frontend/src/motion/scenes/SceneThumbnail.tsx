@@ -8,6 +8,7 @@ import { isEffectivelyHidden } from "../layerTree";
 import { resolveConnectorEndpoints } from "../connectorGeometry";
 import { Connector } from "../connector/Connector";
 import type { ConnectorSpec } from "../connector/ConnectorTypes";
+import { colorGradeFilterId, isIdentityColorGrade, renderColorGradeFilter } from "../colorgrade/colorGrade";
 
 export interface SceneThumbnailProps {
   scene: MotionScene;
@@ -283,6 +284,9 @@ function renderLayer(layer: MotionLayer, sceneDurationMs: number, layers: Motion
     }
 
     let filteredShape: React.ReactNode = shape;
+    if (!isIdentityColorGrade(layer.color_grade)) {
+      filteredShape = <g filter={`url(#${colorGradeFilterId(layer.id)})`}>{filteredShape}</g>;
+    }
     if (t.blur > 0) {
       filteredShape = <g filter={`url(#${layer.id}-blur)`}>{filteredShape}</g>;
     }
@@ -329,6 +333,9 @@ export function SceneThumbnail({ scene, width, height }: SceneThumbnailProps) {
                 {layer.gradient ? renderGradientDef(layer.id, layer.gradient) : null}
                 {layer.shadow ? renderShadowFilter(layer.id, layer.shadow) : null}
                 {t.blur > 0 ? renderBlurFilter(layer.id, t.blur) : null}
+                {!isIdentityColorGrade(layer.color_grade)
+                  ? renderColorGradeFilter(layer.id, layer.color_grade!)
+                  : null}
               </Fragment>
             );
           })}

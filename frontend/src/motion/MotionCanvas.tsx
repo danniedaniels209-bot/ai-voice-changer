@@ -23,6 +23,7 @@ import { Connector } from "./connector/Connector";
 import type { ConnectorSpec } from "./connector/ConnectorTypes";
 import { computeDragSnap, computeResizeSnap } from "./guides";
 import type { GuideLine } from "./guides";
+import { colorGradeFilterId, isIdentityColorGrade, renderColorGradeFilter } from "./colorgrade/colorGrade";
 import { isEffectivelyHidden, isEffectivelyLocked } from "./layerTree";
 
 type ResizeHandle = "nw" | "ne" | "sw" | "se";
@@ -545,10 +546,16 @@ export function MotionCanvas({
       );
     }
 
-    // Apply blur first (inner), then shadow (outer), so feDropShadow
-    // receives the already-blurred shape rather than creating a crisp
-    // shadow of a blurred image.
+    // Order: grade, then blur, then shadow. Grade first so a colored layer's
+    // shadow isn't itself tinted by the grade (feDropShadow's flood-color
+    // draws from its input's alpha, not its color, but blurring an
+    // already-graded shape vs. grading an already-blurred one can still
+    // shift edge colors — putting grade innermost keeps this deterministic
+    // and matches "adjust the source, then apply effects to the result").
     let filteredShape = shape;
+    if (!isIdentityColorGrade(layer.color_grade)) {
+      filteredShape = <g filter={`url(#${colorGradeFilterId(layer.id)})`}>{filteredShape}</g>;
+    }
     if (t.blur > 0) {
       filteredShape = <g filter={`url(#${layer.id}-blur)`}>{filteredShape}</g>;
     }
@@ -656,6 +663,9 @@ export function MotionCanvas({
               {layer.gradient ? renderGradientDef(layer.id, layer.gradient) : null}
               {layer.shadow ? renderShadowFilter(layer.id, layer.shadow) : null}
               {resolved.blur > 0 ? renderBlurFilter(layer.id, resolved.blur) : null}
+              {!isIdentityColorGrade(layer.color_grade)
+                ? renderColorGradeFilter(layer.id, layer.color_grade!)
+                : null}
             </Fragment>
           );
         })}

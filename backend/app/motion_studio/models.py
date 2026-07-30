@@ -252,6 +252,24 @@ class ShadowEffect(BaseModel):
     glow: bool = False
 
 
+class ColorGrade(BaseModel):
+    """Brightness/contrast/saturation/hue adjustment for a layer.
+
+    Identity values (1, 1, 1, 0) — the defaults — must render byte-identical
+    to no grade at all, so existing projects that never touch this are
+    visually unchanged. Rendered as a single SVG <filter> shared by all three
+    renderers; see frontend/src/motion/colorgrade/colorGrade.ts, the one
+    definition of that filter. Composes with blur/shadow in a fixed order —
+    grade first, then blur, then shadow — so a coloured layer doesn't tint
+    its own shadow.
+    """
+
+    brightness: float = 1.0
+    contrast: float = 1.0
+    saturation: float = 1.0
+    hue_deg: float = 0.0
+
+
 class MotionLayer(BaseModel):
     id: str
     name: str
@@ -280,6 +298,7 @@ class MotionLayer(BaseModel):
     # call site to spell out `gradient=None, shadow=None`.
     gradient: GradientFill | None = None
     shadow: ShadowEffect | None = None
+    color_grade: ColorGrade | None = None
 
     # Optional scene-time visibility window. A layer is rendered only during
     # [visible_start_ms ?? 0, visible_end_ms ?? scene.duration_ms). None on

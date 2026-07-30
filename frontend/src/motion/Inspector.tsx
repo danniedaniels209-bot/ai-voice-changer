@@ -10,6 +10,8 @@ import { PresetPicker } from "./presets/PresetPicker";
 import type { PresetId } from "./presets/motionPresets";
 import { VideoCropControls } from "./video/VideoCropControls";
 import { VideoSpeedControls } from "./video/VideoSpeedControls";
+import { CaptionGroupPanel } from "./subtitles/CaptionGroupPanel";
+import { ColorGradePicker } from "./colorgrade/ColorGradePicker";
 
 /** Default starting points for "Add gradient"/"Add shadow" — matches what
  *  GradientPicker / ShadowPicker already consider reasonable, so the user
@@ -48,6 +50,13 @@ interface InspectorProps {
   /** Change the selected keyframe's custom cubic-bezier control points.
    *  Only meaningful while its easing is "custom". */
   onUpdateKeyframeBezier?: (bezier: [number, number, number, number]) => void;
+  // LT-CAPTIONSTYLE — every layer in the active scene (to find subtitle-
+  // import siblings) plus the two batch dispatchers. Optional so this file
+  // doesn't force every OTHER caller of <Inspector> (there's only one today,
+  // but the type shouldn't assume it) to thread props it doesn't use.
+  sceneLayers?: MotionLayer[];
+  onBatchUpdateLayers?: (updates: { layerId: string; patch: Partial<MotionLayer> }[]) => void;
+  onAlignLayers?: (updates: { layerId: string; transform: Transform }[]) => void;
 }
 
 function NumberField({
@@ -221,6 +230,9 @@ export function Inspector({
   selectedKeyframe,
   onUpdateKeyframeEasing,
   onUpdateKeyframeBezier,
+  sceneLayers,
+  onBatchUpdateLayers,
+  onAlignLayers,
 }: InspectorProps) {
   if (!layer) {
     return (
@@ -686,6 +698,24 @@ export function Inspector({
             />
           </div>
         </div>
+      )}
+
+      {/* LT-COLORGRADE: brightness/contrast/saturation/hue. Applies to any
+          layer type — it's a MotionLayer field, not a per-shape prop — so
+          it's unconditional here, unlike the video-only blocks above. */}
+      <ColorGradePicker layer={layer} onUpdateLayer={onUpdateLayer} />
+
+      {/* LT-CAPTIONSTYLE (subtitles/CaptionGroupPanel): batch restyle +
+          group-move for layers from a subtitle import. Kept in its own
+          component, same reasoning as VideoCropControls — this file grows
+          by one block, not the panel's own logic. */}
+      {sceneLayers && onBatchUpdateLayers && onAlignLayers && (
+        <CaptionGroupPanel
+          layer={layer}
+          allLayers={sceneLayers}
+          onBatchUpdateLayers={onBatchUpdateLayers}
+          onAlignLayers={onAlignLayers}
+        />
       )}
     </div>
   );

@@ -1,5 +1,6 @@
 from app.motion_studio.models import (
     AudioTrack,
+    ColorGrade,
     MotionLayer,
     MotionProject,
     MotionScene,
@@ -162,3 +163,26 @@ def test_a_negative_rate_is_rejected_rather_than_silently_clamped():
 
     with _pytest.raises(ValidationError, match="must be >= 0"):
         SpeedKeyframe(id="s", time_ms=0, rate=-1.0)
+
+
+# --- LT-COLORGRADE ------------------------------------------------------------
+
+
+def test_color_grade_defaults_to_none_so_existing_layers_are_unchanged():
+    layer = MotionLayer(id="l1", name="Box", type="rect", rect=RectLayerProps())
+    assert layer.color_grade is None
+
+
+def test_color_grade_default_values_are_identity():
+    grade = ColorGrade()
+    assert (grade.brightness, grade.contrast, grade.saturation, grade.hue_deg) == (1.0, 1.0, 1.0, 0.0)
+
+
+def test_color_grade_round_trips_inside_a_layer():
+    layer = MotionLayer(
+        id="l1", name="Box", type="rect", rect=RectLayerProps(),
+        color_grade=ColorGrade(brightness=1.2, contrast=0.9, saturation=1.5, hue_deg=45),
+    )
+    restored = MotionLayer.model_validate_json(layer.model_dump_json())
+    assert restored == layer
+    assert restored.color_grade.hue_deg == 45
