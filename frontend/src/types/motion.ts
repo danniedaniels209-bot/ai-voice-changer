@@ -404,6 +404,20 @@ export interface MotionLayer {
    *  renderers reads it directly. */
   blend_mode?: BlendMode | null;
 
+  /** When true, this layer acts as a luminance mask for the layer directly
+   *  beneath it in z-order. The mask layer is hidden from the visible scene
+   *  and instead becomes an SVG <mask> that clips the layer below — useful
+   *  for things like cropping a photo to a circle, or punching a shape out
+   *  of a background. Default false so existing projects are byte-identical
+   *  to before. Mirrors backend `MotionLayer.is_mask: bool = False`.
+   *  See `motion/mask/maskMode.tsx` for the shared SVG wiring that all
+   *  three renderers import — none of them read this field directly. */
+  is_mask?: boolean;
+
+  /** LT-MOTIONBLUR: optional per-layer velocity motion blur. Default false
+   *  so existing projects render byte-identical. */
+  motion_blur?: boolean;
+
   /** Optional scene-time visibility window. A layer is rendered only during
    *  [visible_start_ms ?? 0, visible_end_ms ?? scene.duration_ms). null on
    *  either side = "use the scene default", so an unset pair matches

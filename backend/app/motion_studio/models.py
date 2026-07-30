@@ -344,6 +344,18 @@ class MotionLayer(BaseModel):
     # field directly.
     blend_mode: BlendMode | None = None
 
+    # When true, this layer acts as a luminance mask for the layer directly
+    # beneath it in z-order (LT-LAYERMASK). The layer itself is hidden from
+    # the visible scene and instead becomes an SVG <mask> that clips the
+    # layer below — so e.g. a circle drawn above a photo crops the photo
+    # to that circle. Defaults to False so every existing project is
+    # byte-identical to before: no <mask> defs, no <g mask="..."> wrap.
+    # The shared wiring lives in frontend/src/motion/mask/maskMode.tsx and
+    # is imported by all three renderers (MotionCanvas, RenderFrame,
+    # SceneThumbnail) — none of them read this field directly so the three
+    # markup trees can't drift.
+    is_mask: bool = False
+
     # Optional scene-time visibility window. A layer is rendered only during
     # [visible_start_ms ?? 0, visible_end_ms ?? scene.duration_ms). None on
     # either side = "use the scene default", so an unset pair matches today's
@@ -358,6 +370,10 @@ class MotionLayer(BaseModel):
     # having effect because the layer isn't drawn there).
     visible_start_ms: int | None = None
     visible_end_ms: int | None = None
+
+    # LT-MOTIONBLUR: optional per-layer velocity motion blur. Default False
+    # so every existing project is byte-identical to before.
+    motion_blur: bool = False
 
     # Flat list across all animatable properties (not nested per-property
     # tracks) — simplest thing to serialize/mirror; filter by `.property`

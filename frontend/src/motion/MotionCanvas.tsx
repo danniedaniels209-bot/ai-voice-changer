@@ -25,9 +25,15 @@ import { computeDragSnap, computeResizeSnap } from "./guides";
 import type { GuideLine } from "./guides";
 import { colorGradeFilterId, isIdentityColorGrade, renderColorGradeFilter } from "./colorgrade/colorGrade";
 import { blendStyle } from "./blend/blendMode";
+import { applyMaskToLayer, isMaskLayer, renderMask } from "./mask/maskMode";
 import { isEffectivelyHidden, isEffectivelyLocked } from "./layerTree";
+import { resolveTransformAtTime } from "./easing";
+import { computeMotionBlur, motionBlurFilterId, renderMotionBlurFilter } from "./motionblur/motionBlur";
 
 type ResizeHandle = "nw" | "ne" | "sw" | "se";
+
+const ONIONSKIN_FRAMES = 2;
+const ONIONSKIN_STEP_MS = 1000 / 30;
 
 interface MotionCanvasProps {
   scene: MotionScene;
@@ -663,7 +669,7 @@ export function MotionCanvas({
     return getTransform(layer);
   }
 
-  function renderLayer(layer: MotionLayer) {
+  function renderLayer(layer: MotionLayer, index: number) {
     // Effective-hidden check walks the parent chain so hiding a folder
     // cascades to all descendants — same for all three renderers.
     if (isEffectivelyHidden(layer, scene.layers)) return null;
@@ -873,6 +879,22 @@ export function MotionCanvas({
     if (layer.shadow) {
       filteredShape = <g filter={`url(#${layer.id}-shadow)`}>{filteredShape}</g>;
     }
+    const mb = computeMotionBlur(layer, playheadMs);
+    if (mb) {
+      filteredShape = <g filter={`url(#${motionBlurFilterId(layer.id)})`}>{filteredShape}</g>;
+    }
+
+    // LT-LAYERMASK: a layer flagged `is_mask` doesn't render visibly —
+    // it emits ONLY the <mask> def that clips the layer beneath it. The
+    // helper returns null for non-mask layers so this whole branch is a
+    // no-op for existing projects (identity rule: byte-identical SVG).
+    // Note: we use the RAW shape (`shape`, pre-grade/blur/shadow) so a
+    // shadow extending beyond the mask shape doesn't drag the masked
+    // region along with it — the mask is what the user drew, not the
+    // visual effect stack on top of it.
+    if (isMaskLayer(layer)) {
+      return renderMask(layer, shape, t.width, t.height);
+    }
 
     return (
       <g
@@ -882,7 +904,7 @@ export function MotionCanvas({
         onMouseDown={(e) => handleLayerMouseDown(e, layer)}
         style={{ cursor: layer.locked ? "not-allowed" : "move", ...blendStyle(layer.blend_mode) }}
       >
-        {filteredShape}
+        {applyMaskToLayer(scene.layers, index, filteredShape)}
         {selected && (
           <rect
             width={t.width}
@@ -995,6 +1017,7 @@ export function MotionCanvas({
             is drawn. Layers without effects just don't appear here. */}
         {scene.layers.map((layer) => {
           const resolved = getTransform(layer);
+          const mb = computeMotionBlur(layer, playheadMs);
           return (
             <Fragment key={`defs-${layer.id}`}>
               {layer.gradient ? renderGradientDef(layer.id, layer.gradient) : null}
@@ -1003,6 +1026,7 @@ export function MotionCanvas({
               {!isIdentityColorGrade(layer.color_grade)
                 ? renderColorGradeFilter(layer.id, layer.color_grade!)
                 : null}
+              {mb ? renderMotionBlurFilter(layer.id, mb.blurX, mb.blurY) : null}
             </Fragment>
           );
         })}
@@ -1018,7 +1042,7 @@ export function MotionCanvas({
           stroke="#3a3a46"
           strokeWidth={1 / viewport.zoom}
         />
-        {scene.layers.map(renderLayer)}
+        {scene.layers.map((layer, idx) => renderLayer(layer, idx))}
         {(scene.connectors ?? []).map((conn) => {
           const resolved = resolveConnectorEndpoints(conn, scene.layers, playheadMs);
           if (!resolved) return null;
@@ -1032,6 +1056,38 @@ export function MotionCanvas({
             animated: conn.animated,
           };
           return <Connector key={conn.id} spec={spec} currentTime={playheadMs} />;
+        })}
+        {/* Onionskin: ghosted outlines of the selected layer at ±N frames
+            around the playhead so animators can see the motion arc while
+            adjusting keyframes. Editor-canvas only — must NOT be rendered
+            in RenderFrame.tsx or SceneThumbnail.tsx (they don't use this
+            component; see both renderers use their own layer iteration). */}
+        {selectedLayerIds.map((id) => {
+          const layer = scene.layers.find((l) => l.id === id);
+          if (!layer) return null;
+          const lStart = layer.visible_start_ms ?? 0;
+          const lEnd = layer.visible_end_ms ?? scene.duration_ms;
+          const ghosts: React.ReactNode[] = [];
+          for (let i = -ONIONSKIN_FRAMES; i <= ONIONSKIN_FRAMES; i++) {
+            if (i === 0) continue;
+            const ghostTime = playheadMs + i * ONIONSKIN_STEP_MS;
+            if (ghostTime < lStart || ghostTime > lEnd) continue;
+            const gt = resolveTransformAtTime(layer, ghostTime);
+            const opacity = Math.max(0.05, 0.25 - Math.abs(i) * 0.08);
+            ghosts.push(
+              <g key={`${id}-onion-${i}`}
+                 transform={`translate(${gt.x} ${gt.y}) rotate(${gt.rotation} ${gt.width / 2} ${gt.height / 2})`}
+                 opacity={opacity}
+                 pointerEvents="none"
+              >
+                <rect width={gt.width} height={gt.height}
+                      fill="none" stroke="#22D3EE"
+                      strokeWidth={2 / viewport.zoom}
+                      vectorEffect="non-scaling-stroke" />
+              </g>,
+            );
+          }
+          return ghosts;
         })}
         {/* Snap-guide lines — drawn above layers/connectors so they're
             always visible but don't participate in layout/events. */}

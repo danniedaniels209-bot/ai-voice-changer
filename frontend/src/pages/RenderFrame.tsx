@@ -15,6 +15,7 @@ import { cropInset, isLayerVisibleAt, videoSourceTimeMs } from "../types/motion"
 import { ease } from "../motion/easing";
 import { colorGradeFilterId, isIdentityColorGrade, renderColorGradeFilter } from "../motion/colorgrade/colorGrade";
 import { blendStyle } from "../motion/blend/blendMode";
+import { applyMaskToLayer, isMaskLayer, renderMask } from "../motion/mask/maskMode";
 import type { GradientFill } from "../motion/gradients/gradientTypes";
 import type { ShadowEffect } from "../motion/shadowfx/shadowTypes";
 import { lineHeight, wrapTextToLines } from "../motion/textWrap";
@@ -22,6 +23,7 @@ import { isEffectivelyHidden } from "../motion/layerTree";
 import { resolveConnectorEndpoints } from "../motion/connectorGeometry";
 import { Connector } from "../motion/connector/Connector";
 import type { ConnectorSpec } from "../motion/connector/ConnectorTypes";
+import { computeMotionBlur, motionBlurFilterId, renderMotionBlurFilter } from "../motion/motionblur/motionBlur";
 
 // Easing comes from motion/easing.ts — the same module the editor canvas
 // uses. This file used to carry its OWN switch statement, and it had silently
@@ -154,7 +156,13 @@ function resolveFill(
   return solidFill;
 }
 
-function renderLayer(layer: MotionLayer, timeMs: number, sceneDurationMs: number, layers: MotionLayer[]) {
+function renderLayer(
+  layer: MotionLayer,
+  timeMs: number,
+  sceneDurationMs: number,
+  layers: MotionLayer[],
+  index: number,
+) {
   if (isEffectivelyHidden(layer, layers)) return null;
   // Same scene-time visibility gate as the editor canvas. This has to match
   // MotionCanvas exactly or the export shows layers the editor didn't.
@@ -377,10 +385,28 @@ function renderLayer(layer: MotionLayer, timeMs: number, sceneDurationMs: number
     if (layer.shadow) {
       filteredShape = <g filter={`url(#${layer.id}-shadow)`}>{filteredShape}</g>;
     }
+    const mb = computeMotionBlur(layer, timeMs);
+    if (mb) {
+      filteredShape = <g filter={`url(#${motionBlurFilterId(layer.id)})`}>{filteredShape}</g>;
+    }
+
+  // LT-LAYERMASK — identical wiring and ordering to MotionCanvas.tsx and
+  // SceneThumbnail.tsx, via the shared helper. A mask layer emits ONLY its
+  // <mask> def and draws nothing itself; the layer beneath it gets wrapped
+  // in <g mask="url(#...)">. Both sides are no-ops when no mask is present,
+  // so a project without masks renders byte-identical SVG.
+  //
+  // Uses the RAW `shape` (pre-grade/blur/shadow) for the mask contents, the
+  // same as the canvas does — the mask is the shape the user drew, not the
+  // visual effect stack layered on top of it. Passing `filteredShape` here
+  // instead would make a shadowed mask silently enlarge its own cut-out.
+  if (isMaskLayer(layer)) {
+    return renderMask(layer, shape, t.width, t.height);
+  }
 
   return (
     <g key={layer.id} transform={groupTransform} opacity={t.opacity} style={blendStyle(layer.blend_mode)}>
-      {filteredShape}
+      {applyMaskToLayer(layers, index, filteredShape)}
     </g>
   );
 }
@@ -577,6 +603,7 @@ export function RenderFrame() {
         <defs>
           {scene.layers.map((layer) => {
             const t = getEvaluatedTransform(layer, requestedTimeMs);
+            const mb = computeMotionBlur(layer, requestedTimeMs);
             return (
               <Fragment key={`defs-${layer.id}`}>
                 {layer.gradient ? renderGradientDef(layer.id, layer.gradient) : null}
@@ -585,11 +612,14 @@ export function RenderFrame() {
                 {!isIdentityColorGrade(layer.color_grade)
                   ? renderColorGradeFilter(layer.id, layer.color_grade!)
                   : null}
+                {mb ? renderMotionBlurFilter(layer.id, mb.blurX, mb.blurY) : null}
               </Fragment>
             );
           })}
         </defs>
-        {scene.layers.map((layer) => renderLayer(layer, requestedTimeMs, scene.duration_ms, scene.layers))}
+        {scene.layers.map((layer, idx) =>
+          renderLayer(layer, requestedTimeMs, scene.duration_ms, scene.layers, idx),
+        )}
         {/* Connectors, drawn after the layers so they sit on top — identical
             to MotionCanvas.tsx. Without this block connectors are visible in
             the editor and ABSENT from the export, which is the canvas/export

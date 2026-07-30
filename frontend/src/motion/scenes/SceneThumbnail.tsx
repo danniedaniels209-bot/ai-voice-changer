@@ -10,6 +10,8 @@ import { Connector } from "../connector/Connector";
 import type { ConnectorSpec } from "../connector/ConnectorTypes";
 import { colorGradeFilterId, isIdentityColorGrade, renderColorGradeFilter } from "../colorgrade/colorGrade";
 import { blendStyle } from "../blend/blendMode";
+import { applyMaskToLayer, isMaskLayer, renderMask } from "../mask/maskMode";
+import { computeMotionBlur, motionBlurFilterId, renderMotionBlurFilter } from "../motionblur/motionBlur";
 
 export interface SceneThumbnailProps {
   scene: MotionScene;
@@ -115,7 +117,12 @@ function resolveFill(layer: MotionLayer, solidFill: string): string {
   return solidFill;
 }
 
-function renderLayer(layer: MotionLayer, sceneDurationMs: number, layers: MotionLayer[]): React.ReactNode {
+function renderLayer(
+  layer: MotionLayer,
+  sceneDurationMs: number,
+  layers: MotionLayer[],
+  index: number,
+): React.ReactNode {
   if (isEffectivelyHidden(layer, layers)) return null;
   // The thumbnail claims to be the scene's first frame, so a layer whose
   // time window starts later genuinely isn't in it. Showing it anyway would
@@ -294,10 +301,26 @@ function renderLayer(layer: MotionLayer, sceneDurationMs: number, layers: Motion
     if (layer.shadow) {
       filteredShape = <g filter={`url(#${layer.id}-shadow)`}>{filteredShape}</g>;
     }
+    const mb = computeMotionBlur(layer, 0);
+    if (mb) {
+      filteredShape = <g filter={`url(#${motionBlurFilterId(layer.id)})`}>{filteredShape}</g>;
+    }
+
+  // LT-LAYERMASK — identical wiring and ordering to MotionCanvas.tsx and
+  // RenderFrame.tsx, via the shared helper. Mask layers emit only their
+  // <mask> def; the layer beneath gets wrapped. Both sides no-op when no
+  // mask is present, so mask-free scenes thumbnail byte-identically.
+  //
+  // Uses the RAW `shape` for the mask contents (not `filteredShape`), same
+  // as the other two renderers — the mask is the drawn shape, not the shape
+  // plus its shadow/blur.
+  if (isMaskLayer(layer)) {
+    return renderMask(layer, shape, t.width, t.height);
+  }
 
   return (
     <g key={layer.id} transform={groupTransform} opacity={t.opacity} style={blendStyle(layer.blend_mode)}>
-      {filteredShape}
+      {applyMaskToLayer(layers, index, filteredShape)}
     </g>
   );
 }
@@ -329,6 +352,7 @@ export function SceneThumbnail({ scene, width, height }: SceneThumbnailProps) {
         <defs>
           {scene.layers.map((layer) => {
             const t = transformAtRest(layer);
+            const mb = computeMotionBlur(layer, 0);
             return (
               <Fragment key={`defs-${layer.id}`}>
                 {layer.gradient ? renderGradientDef(layer.id, layer.gradient) : null}
@@ -337,12 +361,13 @@ export function SceneThumbnail({ scene, width, height }: SceneThumbnailProps) {
                 {!isIdentityColorGrade(layer.color_grade)
                   ? renderColorGradeFilter(layer.id, layer.color_grade!)
                   : null}
+                {mb ? renderMotionBlurFilter(layer.id, mb.blurX, mb.blurY) : null}
               </Fragment>
             );
           })}
         </defs>
         <rect width={sceneW} height={sceneH} fill={scene.background_color} />
-        {scene.layers.map((layer) => renderLayer(layer, scene.duration_ms, scene.layers))}
+        {scene.layers.map((layer, idx) => renderLayer(layer, scene.duration_ms, scene.layers, idx))}
         {(scene.connectors ?? []).map((conn) => {
           const resolved = resolveConnectorEndpoints(conn, scene.layers, 0);
           if (!resolved) return null;

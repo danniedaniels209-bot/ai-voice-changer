@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { X, Film, Download, Loader2, CheckCircle2, AlertCircle } from "lucide-react";
+import { X, Film, Download, Loader2, CheckCircle2, AlertCircle, Bookmark, Trash2, Save } from "lucide-react";
 import {
   exportMotionProject,
   getMotionExportStatus,
@@ -7,6 +7,13 @@ import {
   type MotionExportTaskStatus,
   type MotionExportFormat,
 } from "../../api/motion";
+import {
+  BUILTIN_PRESETS,
+  deleteCustomPreset,
+  getCustomPresets,
+  saveCustomPreset,
+  type ExportPreset,
+} from "./exportPresets";
 
 import type { MotionProject } from "../../types/motion";
 
@@ -83,6 +90,13 @@ export function ExportDialog({ isOpen, onClose, project, activeSceneId }: Export
   const [transparent, setTransparent] = useState<boolean>(false);
   const [allScenes, setAllScenes] = useState<boolean>(false);
   const [qualityId, setQualityId] = useState<string>("high");
+
+  // LT-EXPORTPRESETS. Loaded once per dialog open (a fresh useState
+  // initializer runs on mount, and the dialog itself is only ever
+  // mounted/unmounted via `isOpen`'s early return below, not kept alive
+  // across opens) so a preset saved in one session shows up next time
+  // without needing a manual refresh call.
+  const [customPresets, setCustomPresets] = useState<ExportPreset[]>(() => getCustomPresets());
 
   const [status, setStatus] = useState<"idle" | "exporting" | "completed" | "error">("idle");
   const [progress, setProgress] = useState<number>(0);
@@ -210,6 +224,36 @@ export function ExportDialog({ isOpen, onClose, project, activeSceneId }: Export
     window.open(downloadPath, "_blank");
   }
 
+  // LT-EXPORTPRESETS. Applies all four settings a preset carries in one
+  // click — the whole point is not re-picking resolution, format, fps, and
+  // quality one dropdown at a time for a platform you export to often.
+  function applyPreset(preset: ExportPreset) {
+    setSelectedPresetId(preset.resolutionPresetId);
+    setFps(preset.fps);
+    setFormat(preset.format as MotionExportFormat);
+    setQualityId(preset.qualityId);
+    setTransparent(preset.transparent);
+  }
+
+  function handleSaveCurrentAsPreset() {
+    const name = window.prompt("Name this preset:");
+    if (name === null) return; // cancelled
+    const saved = saveCustomPreset(name, {
+      resolutionPresetId: selectedPresetId,
+      fps,
+      format,
+      qualityId,
+      transparent,
+    });
+    if (saved) setCustomPresets(getCustomPresets());
+  }
+
+  function handleDeletePreset(id: string, e: React.MouseEvent) {
+    e.stopPropagation();
+    deleteCustomPreset(id);
+    setCustomPresets(getCustomPresets());
+  }
+
   return (
     <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
       <div className="bg-surface border border-border rounded-xl shadow-2xl w-full max-w-md overflow-hidden flex flex-col">
@@ -231,6 +275,52 @@ export function ExportDialog({ isOpen, onClose, project, activeSceneId }: Export
 
         {/* Body */}
         <div className="p-5 space-y-4 text-sm">
+          {/* LT-EXPORTPRESETS — one click sets resolution/fps/format/quality
+              together. Presets are a dialog convenience, not project data:
+              they never reach the backend, and saving one just writes to
+              localStorage (same place panel sizes / audio-open live). */}
+          <div className="space-y-1.5">
+            <label className="block text-xs font-medium text-text-muted">Preset</label>
+            <div className="flex flex-wrap gap-1.5">
+              {[...BUILTIN_PRESETS, ...customPresets].map((preset) => {
+                const isCustom = !BUILTIN_PRESETS.includes(preset);
+                return (
+                  <button
+                    key={preset.id}
+                    type="button"
+                    onClick={() => applyPreset(preset)}
+                    disabled={status === "exporting"}
+                    title={`${preset.resolutionPresetId} · ${preset.format.toUpperCase()} · ${preset.fps}fps`}
+                    className="group flex items-center gap-1 px-2.5 py-1 rounded-md border border-border text-xs text-text-muted hover:border-accent hover:text-text disabled:opacity-40"
+                  >
+                    <Bookmark size={11} className="text-text-faint group-hover:text-accent" />
+                    {preset.name}
+                    {isCustom && (
+                      <span
+                        role="button"
+                        title="Delete preset"
+                        onClick={(e) => handleDeletePreset(preset.id, e)}
+                        className="ml-0.5 text-text-faint hover:text-danger"
+                      >
+                        <Trash2 size={11} />
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+              <button
+                type="button"
+                onClick={handleSaveCurrentAsPreset}
+                disabled={status === "exporting"}
+                title="Save the current settings below as a reusable preset"
+                className="flex items-center gap-1 px-2.5 py-1 rounded-md border border-dashed border-border text-xs text-text-faint hover:border-accent hover:text-accent disabled:opacity-40"
+              >
+                <Save size={11} />
+                Save current…
+              </button>
+            </div>
+          </div>
+
           {/* Scope. Hidden on single-scene projects, where "whole project"
               and "this scene" are the same thing and the choice is just
               noise. */}

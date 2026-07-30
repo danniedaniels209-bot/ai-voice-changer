@@ -13,6 +13,7 @@ import { VideoSpeedControls } from "./video/VideoSpeedControls";
 import { CaptionGroupPanel } from "./subtitles/CaptionGroupPanel";
 import { ColorGradePicker } from "./colorgrade/ColorGradePicker";
 import { BlendModePicker } from "./blend/BlendModePicker";
+import { MotionBlurPicker } from "./motionblur/MotionBlurPicker";
 
 /** Default starting points for "Add gradient"/"Add shadow" — matches what
  *  GradientPicker / ShadowPicker already consider reasonable, so the user
@@ -712,6 +713,9 @@ export function Inspector({
           in motion/blend/blendMode.ts so all three renderers share one
           definition rather than re-emitting the style three times. */}
       <BlendModePicker layer={layer} onUpdateLayer={onUpdateLayer} />
+
+      {/* LT-MOTIONBLUR: velocity motion blur toggle. */}
+      <MotionBlurPicker layer={layer} onUpdateLayer={onUpdateLayer} />
 
       {/* LT-CAPTIONSTYLE (subtitles/CaptionGroupPanel): batch restyle +
           group-move for layers from a subtitle import. Kept in its own
