@@ -90,6 +90,9 @@ export function SubtitleImportModal({
   const [transcribeProgress, setTranscribeProgress] = useState(0);
   const [transcribeError, setTranscribeError] = useState<string | null>(null);
 
+  // LT-CAPTIONEDIT: inline editing of cue text before import
+  const [editingCueIndex, setEditingCueIndex] = useState<number | null>(null);
+
   const style = getPreset(presetId);
 
   const result = useMemo(
@@ -219,6 +222,15 @@ export function SubtitleImportModal({
     if (result.layers.length === 0) return;
     onInsertLayers(result.layers);
     onClose();
+  }
+
+  /** LT-CAPTIONEDIT: update a cue's text inline before importing. */
+  function handleCueTextEdit(index: number, newText: string) {
+    const trimmed = newText.trim();
+    if (!trimmed || trimmed === cues[index].text) return;
+    setCues((prev) =>
+      prev.map((c, i) => (i === index ? { ...c, text: trimmed } : c)),
+    );
   }
 
   const captionCount = result.layers.filter((l) => l.type === "text").length;
@@ -430,34 +442,65 @@ export function SubtitleImportModal({
               <div className="text-xs font-medium text-text-muted mb-2">
                 {captionCount} caption{captionCount === 1 ? "" : "s"} → {result.layers.length} layer
                 {result.layers.length === 1 ? "" : "s"} (one undo step)
+                {cues.length > 0 && (
+                  <span className="ml-2 text-text-faint font-normal">· click text to edit</span>
+                )}
               </div>
               <div className="rounded-lg border border-border divide-y divide-border max-h-52 overflow-y-auto">
-                {result.layers
-                  .filter((l) => l.type === "text")
-                  .slice(0, 12)
-                  .map((l) => {
-                    const hasLowConf = lowConfidenceWords.some((w) => l.text?.text.includes(w.word));
-                    return (
-                      <div key={l.id} className="px-3 py-2 flex items-center justify-between gap-3 text-xs">
-                        <div className="flex gap-3 items-center">
-                          <span className="font-mono text-text-faint shrink-0">
-                            {fmt((l.visible_start_ms ?? 0) / 1000)} → {fmt((l.visible_end_ms ?? 0) / 1000)}
-                          </span>
-                          <span className="text-text whitespace-pre-wrap">{l.text?.text}</span>
-                        </div>
-                        {hasLowConf && (
+                {cues.slice(0, 30).map((cue, idx) => {
+                  const hasLowConf =
+                    cue.words &&
+                    cue.words.some((w) => w.confidence !== undefined && w.confidence < 0.7);
+                  const isEditing = editingCueIndex === idx;
+                  return (
+                    <div key={cue.id} className="px-3 py-2 flex items-center justify-between gap-3 text-xs">
+                      <div className="flex gap-3 items-center flex-1 min-w-0">
+                        <span className="font-mono text-text-faint shrink-0">
+                          {fmt(cue.start)} → {fmt(cue.end)}
+                        </span>
+                        {isEditing ? (
+                          <input
+                            autoFocus
+                            defaultValue={cue.text}
+                            onBlur={(e) => {
+                              handleCueTextEdit(idx, e.target.value);
+                              setEditingCueIndex(null);
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                              if (e.key === "Escape") {
+                                (e.target as HTMLInputElement).value = cue.text;
+                                setEditingCueIndex(null);
+                              }
+                            }}
+                            className="flex-1 min-w-0 px-1.5 py-0.5 rounded bg-surface-hover border border-accent text-text text-xs focus:outline-none"
+                          />
+                        ) : (
                           <span
-                            title="Contains word(s) with low STT confidence (<70%)"
-                            className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-500/20 text-amber-300 shrink-0"
+                            className="text-text whitespace-pre-wrap cursor-pointer hover:bg-surface-hover hover:rounded px-1 -mx-1 transition-colors"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setEditingCueIndex(idx);
+                            }}
+                            title="Click to edit"
                           >
-                            Check text
+                            {cue.text}
                           </span>
                         )}
                       </div>
-                    );
-                  })}
-                {captionCount > 12 && (
-                  <div className="px-3 py-2 text-xs text-text-faint">…and {captionCount - 12} more</div>
+                      {hasLowConf && (
+                        <span
+                          title="Contains word(s) with low STT confidence (<70%)"
+                          className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-500/20 text-amber-300 shrink-0"
+                        >
+                          Check text
+                        </span>
+                      )}
+                    </div>
+                  );
+                })}
+                {cues.length > 30 && (
+                  <div className="px-3 py-2 text-xs text-text-faint">…and {cues.length - 30} more</div>
                 )}
               </div>
             </div>

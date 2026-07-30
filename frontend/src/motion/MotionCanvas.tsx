@@ -24,6 +24,7 @@ import type { ConnectorSpec } from "./connector/ConnectorTypes";
 import { computeDragSnap, computeResizeSnap } from "./guides";
 import type { GuideLine } from "./guides";
 import { colorGradeFilterId, isIdentityColorGrade, renderColorGradeFilter } from "./colorgrade/colorGrade";
+import { blendStyle } from "./blend/blendMode";
 import { isEffectivelyHidden, isEffectivelyLocked } from "./layerTree";
 
 type ResizeHandle = "nw" | "ne" | "sw" | "se";
@@ -36,6 +37,7 @@ interface MotionCanvasProps {
   onMoveLayers?: (moves: Array<{ layerId: string; x: number; y: number }>) => void;
   onResizeLayer: (layerId: string, patch: Partial<Transform>) => void;
   onResizeLayers?: (moves: Array<{ layerId: string; patch: Partial<Transform> }>) => void;
+  onRotateLayers?: (moves: Array<{ layerId: string; patch: Partial<Transform> }>) => void;
   /** The transform to actually draw for a layer — resolved through its
    * keyframes at the current playhead, or its static transform when it
    * has none. Dragging starts FROM this value too, so grabbing an
@@ -191,6 +193,17 @@ interface ResizeState {
   layers: ResizeLayerItem[];
 }
 
+interface RotateLayerItem {
+  layerId: string;
+  start: Transform;
+}
+
+interface RotateState {
+  startAngleRad: number;
+  center: { x: number; y: number };
+  layers: RotateLayerItem[];
+}
+
 export function MotionCanvas({
   scene,
   selectedLayerIds,
@@ -199,6 +212,7 @@ export function MotionCanvas({
   onMoveLayers,
   onResizeLayer,
   onResizeLayers,
+  onRotateLayers,
   getTransform,
   playheadMs,
   isPlaying,
@@ -212,6 +226,9 @@ export function MotionCanvas({
   const [dragPreview, setDragPreview] = useState<Record<string, { x: number; y: number }> | null>(null);
   const [resizePreview, setResizePreview] = useState<
     Record<string, { x: number; y: number; width: number; height: number }> | null
+  >(null);
+  const [rotatePreview, setRotatePreview] = useState<
+    Record<string, { x: number; y: number; rotation: number }> | null
   >(null);
   const [guides, setGuides] = useState<GuideLine[]>([]);
   const [showSafeArea, setShowSafeArea] = useState(false);
@@ -232,6 +249,7 @@ export function MotionCanvas({
   const panState = useRef<{ startX: number; startY: number; originX: number; originY: number } | null>(null);
   const dragState = useRef<DragState | null>(null);
   const resizeState = useRef<ResizeState | null>(null);
+  const rotateState = useRef<RotateState | null>(null);
 
   function handleWheel(e: React.WheelEvent<SVGSVGElement>) {
     e.preventDefault();
@@ -380,6 +398,47 @@ export function MotionCanvas({
     };
   }
 
+  function handleRotateMouseDown(e: React.MouseEvent) {
+    e.stopPropagation();
+
+    const activeLayers = scene.layers.filter(
+      (l) => selectedLayerIds.includes(l.id) && !isEffectivelyLocked(l, scene.layers),
+    );
+    if (activeLayers.length === 0) return;
+
+    // Calculate group bounding box center
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+
+    const layerItems: RotateLayerItem[] = activeLayers.map((l) => {
+      const t = getTransform(l);
+      minX = Math.min(minX, t.x);
+      minY = Math.min(minY, t.y);
+      maxX = Math.max(maxX, t.x + t.width);
+      maxY = Math.max(maxY, t.y + t.height);
+      return { layerId: l.id, start: t };
+    });
+
+    const center = {
+      x: (minX + maxX) / 2,
+      y: (minY + maxY) / 2,
+    };
+
+    // Compute starting angle from center to mouse position in scene coordinates
+    const rect = svgRef.current!.getBoundingClientRect();
+    const mouseSceneX = (e.clientX - rect.left - viewport.x) / viewport.zoom;
+    const mouseSceneY = (e.clientY - rect.top - viewport.y) / viewport.zoom;
+    const startAngleRad = Math.atan2(mouseSceneY - center.y, mouseSceneX - center.x);
+
+    rotateState.current = {
+      startAngleRad,
+      center,
+      layers: layerItems,
+    };
+  }
+
   function handleMouseMove(e: React.MouseEvent<SVGSVGElement>) {
     if (panState.current) {
       const dx = e.clientX - panState.current.startX;
@@ -486,6 +545,40 @@ export function MotionCanvas({
       setResizePreview(nextPreviews);
       setGuides([]);
     }
+    if (rotateState.current) {
+      const rots = rotateState.current;
+      const rect = svgRef.current!.getBoundingClientRect();
+      const mouseSceneX = (e.clientX - rect.left - viewport.x) / viewport.zoom;
+      const mouseSceneY = (e.clientY - rect.top - viewport.y) / viewport.zoom;
+      const currentAngle = Math.atan2(mouseSceneY - rots.center.y, mouseSceneX - rots.center.x);
+      const deltaAngle = currentAngle - rots.startAngleRad;
+      const deltaDeg = (deltaAngle * 180) / Math.PI;
+
+      const nextPreviews: Record<string, { x: number; y: number; rotation: number }> = {};
+      const cos = Math.cos(deltaAngle);
+      const sin = Math.sin(deltaAngle);
+
+      for (const item of rots.layers) {
+        const t = item.start;
+        // Rotate each layer's center around the group center
+        const layerCenterX = t.x + t.width / 2;
+        const layerCenterY = t.y + t.height / 2;
+        const relX = layerCenterX - rots.center.x;
+        const relY = layerCenterY - rots.center.y;
+        const newRelX = relX * cos - relY * sin;
+        const newRelY = relX * sin + relY * cos;
+        const newCenterX = rots.center.x + newRelX;
+        const newCenterY = rots.center.y + newRelY;
+
+        nextPreviews[item.layerId] = {
+          x: newCenterX - t.width / 2,
+          y: newCenterY - t.height / 2,
+          rotation: t.rotation + deltaDeg,
+        };
+      }
+
+      setRotatePreview(nextPreviews);
+    }
   }
 
   function handleMouseUp() {
@@ -531,10 +624,29 @@ export function MotionCanvas({
         }
       }
     }
+    if (rotateState.current && rotatePreview) {
+      const rots = rotateState.current;
+      const moves = rots.layers
+        .filter((l) => rotatePreview[l.layerId] !== undefined)
+        .map((l) => ({
+          layerId: l.layerId,
+          patch: rotatePreview[l.layerId] as Partial<Transform>,
+        }));
+
+      if (moves.length > 0) {
+        if (onRotateLayers) {
+          onRotateLayers(moves);
+        } else {
+          moves.forEach((m) => onResizeLayer(m.layerId, m.patch));
+        }
+      }
+    }
     dragState.current = null;
     resizeState.current = null;
+    rotateState.current = null;
     setDragPreview(null);
     setResizePreview(null);
+    setRotatePreview(null);
     setGuides([]);
   }
 
@@ -544,6 +656,9 @@ export function MotionCanvas({
     }
     if (resizePreview?.[layer.id]) {
       return { ...getTransform(layer), ...resizePreview[layer.id] };
+    }
+    if (rotatePreview?.[layer.id]) {
+      return { ...getTransform(layer), ...rotatePreview[layer.id] };
     }
     return getTransform(layer);
   }
@@ -765,7 +880,7 @@ export function MotionCanvas({
         transform={groupTransform}
         opacity={t.opacity}
         onMouseDown={(e) => handleLayerMouseDown(e, layer)}
-        style={{ cursor: layer.locked ? "not-allowed" : "move" }}
+        style={{ cursor: layer.locked ? "not-allowed" : "move", ...blendStyle(layer.blend_mode) }}
       >
         {filteredShape}
         {selected && (
@@ -821,6 +936,32 @@ export function MotionCanvas({
                 />
               );
             })}
+          </>
+        )}
+        {/* Rotate handle: small circle above top-center */}
+        {selected && !layer.locked && (
+          <>
+            {/* Line from top-center to rotate handle */}
+            <line
+              x1={t.width / 2}
+              y1={0}
+              x2={t.width / 2}
+              y2={-24 / viewport.zoom}
+              stroke="#6366F1"
+              strokeWidth={1.5 / viewport.zoom}
+              pointerEvents="none"
+            />
+            {/* Rotate handle circle */}
+            <circle
+              cx={t.width / 2}
+              cy={-24 / viewport.zoom}
+              r={5 / viewport.zoom}
+              fill="#6366F1"
+              stroke="#fff"
+              strokeWidth={1.5 / viewport.zoom}
+              style={{ cursor: "grab" }}
+              onMouseDown={(e) => handleRotateMouseDown(e)}
+            />
           </>
         )}
       </g>

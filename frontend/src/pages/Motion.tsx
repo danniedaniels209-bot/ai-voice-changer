@@ -11,6 +11,7 @@ import {
 import { TemplateGallery } from "../motion/templates/TemplateGallery";
 import { ProjectSearchBar } from "../motion/projects/ProjectSearchBar";
 import { filterAndSortProjects, type ProjectSortBy } from "../motion/projects/filterProjects";
+import { SceneThumbnail } from "../motion/scenes/SceneThumbnail";
 import type { MotionScene } from "../types/motion";
 
 export function Motion() {
@@ -154,23 +155,38 @@ export function Motion() {
               key={p.id}
               type="button"
               onClick={() => navigate(`/motion/${p.id}`)}
-              className="text-left border border-border rounded-lg p-4 hover:bg-surface-hover hover:border-accent transition-colors group"
+              className="text-left border border-border rounded-lg overflow-hidden hover:bg-surface-hover hover:border-accent transition-colors group"
             >
-              <div className="flex items-start justify-between gap-2">
-                <span className="font-medium text-sm truncate">{p.name}</span>
-                <span
-                  role="button"
-                  title="Delete project"
-                  onClick={(e) => handleDelete(p.id, e)}
-                  className="text-text-faint hover:text-danger opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
-                >
-                  <Trash2 size={14} />
-                </span>
+              {/* LT-PROJECTTHUMBNAILS: a live SVG preview of the project's
+                  first scene, first frame — the same renderer the scene
+                  panel already uses inside the editor, just at card size.
+                  A project with zero scenes (or one that failed to
+                  validate server-side) falls back to the plain icon that
+                  was here before. */}
+              <div className="aspect-video bg-background flex items-center justify-center border-b border-border">
+                {p.first_scene ? (
+                  <SceneThumbnail scene={p.first_scene} width={280} height={157} />
+                ) : (
+                  <Clapperboard size={28} className="text-text-faint/40" />
+                )}
               </div>
-              <p className="text-text-muted text-xs mt-1">
-                {p.scene_count} scene{p.scene_count === 1 ? "" : "s"} · updated{" "}
-                {new Date(p.updated_at).toLocaleDateString()}
-              </p>
+              <div className="p-4">
+                <div className="flex items-start justify-between gap-2">
+                  <span className="font-medium text-sm truncate">{p.name}</span>
+                  <span
+                    role="button"
+                    title="Delete project"
+                    onClick={(e) => handleDelete(p.id, e)}
+                    className="text-text-faint hover:text-danger opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
+                  >
+                    <Trash2 size={14} />
+                  </span>
+                </div>
+                <p className="text-text-muted text-xs mt-1">
+                  {p.scene_count} scene{p.scene_count === 1 ? "" : "s"} · updated{" "}
+                  {new Date(p.updated_at).toLocaleDateString()}
+                </p>
+              </div>
             </button>
           ))}
         </div>

@@ -121,7 +121,7 @@ export type EditorAction =
   // LT-SCENETRANSITION-PICKER: set a scene's entrance transition AND apply
   // the transition keyframes to its layers in one undo step. Passing
   // transitionId=null clears the field and removes transition keyframes.
-  | { type: "SET_SCENE_TRANSITION"; sceneId: string; transitionId: string | null; updates: { layerId: string; keyframes: Keyframe[] }[] }
+  | { type: "SET_SCENE_TRANSITION"; sceneId: string; transitionId: string | null; durationMs?: number | null; updates: { layerId: string; keyframes: Keyframe[] }[] }
   | { type: "RIPPLE_RETIME"; layerId: string; deltaMs: number }
   | { type: "UNDO" }
   | { type: "REDO" };
@@ -880,7 +880,7 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
           }
           return { ...layer, keyframes: upd.keyframes };
         });
-        return { ...s, layers: updatedLayers, transition_id: action.transitionId };
+        return { ...s, layers: updatedLayers, transition_id: action.transitionId, transition_duration_ms: action.durationMs ?? null };
       });
       return { ...state, ...snapshot(state), project: { ...state.project, scenes }, dirty: true };
     }

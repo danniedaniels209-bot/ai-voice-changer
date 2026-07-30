@@ -278,6 +278,34 @@ class ColorGrade(BaseModel):
     hue_deg: float = 0.0
 
 
+# Valid CSS mix-blend-mode values (LT-LAYERBLEND). Kept as a module-level
+# Literal so the frontend can mirror it byte-for-byte and the backend can
+# reject anything that isn't a real CSS value at the API boundary instead
+# of silently passing through to a renderer that ignores it. `normal` IS
+# a valid CSS value (the default behaviour) — we use `null` on the wire
+# to mean "no explicit blend set", which the renderers treat as `normal`,
+# so existing projects render byte-identical without us having to emit a
+# `style="mix-blend-mode: normal"` on every layer's <g>.
+BlendMode = Literal[
+    "normal",
+    "multiply",
+    "screen",
+    "overlay",
+    "darken",
+    "lighten",
+    "color-dodge",
+    "color-burn",
+    "hard-light",
+    "soft-light",
+    "difference",
+    "exclusion",
+    "hue",
+    "saturation",
+    "color",
+    "luminosity",
+]
+
+
 class MotionLayer(BaseModel):
     id: str
     name: str
@@ -307,6 +335,14 @@ class MotionLayer(BaseModel):
     gradient: GradientFill | None = None
     shadow: ShadowEffect | None = None
     color_grade: ColorGrade | None = None
+    # Optional CSS mix-blend-mode (LT-LAYERBLEND). None / absent = normal
+    # blending, which is the historical behaviour and what every existing
+    # project relies on — the renderers apply no style at all in that case,
+    # not a `mix-blend-mode: normal`, so the markup is byte-identical to
+    # before this feature existed. See frontend/src/motion/blend/blendMode.ts
+    # for the shared getter all three renderers use; none of them read the
+    # field directly.
+    blend_mode: BlendMode | None = None
 
     # Optional scene-time visibility window. A layer is rendered only during
     # [visible_start_ms ?? 0, visible_end_ms ?? scene.duration_ms). None on
@@ -384,6 +420,10 @@ class MotionScene(BaseModel):
     # time the transition is picked; this is a reference so the UI can
     # show what's active. Default None so existing projects are unaffected.
     transition_id: str | None = None
+    # Duration of the entrance transition in milliseconds. None = use the
+    # default (600ms). Mirrors the frontend field; stored so the UI can
+    # show and edit the duration.
+    transition_duration_ms: int | None = None
 
 
 class MotionProject(BaseModel):

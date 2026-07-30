@@ -18,7 +18,7 @@ export interface ScenePanelProps {
   onDelete: (sceneId: string) => void;
   onReorder: (sceneId: string, toIndex: number) => void;
   onAdd?: () => void;
-  onApplyTransition?: (sceneId: string, transitionId: string) => void;
+  onApplyTransition?: (sceneId: string, transitionId: string, durationMs: number) => void;
   onClearTransition?: (sceneId: string) => void;
 }
 
@@ -89,6 +89,7 @@ export function ScenePanel({
                 key={`trans-${scene.id}`}
                 sceneId={scene.id}
                 transitionId={scene.transition_id}
+                transitionDurationMs={scene.transition_duration_ms}
                 onApplyTransition={onApplyTransition!}
                 onClearTransition={onClearTransition!}
               />,

@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { getMotionProject, saveMotionProject, uploadMotionAsset, type MotionAsset } from "../api/motion";
 import { editorReducer, getResolvedTransform, newId, type EditorState } from "../motion/state";
+import { resolveTransformAtTime } from "../motion/easing";
 import { createLayer } from "../motion/layerFactory";
 import { usePlaybackClock } from "../motion/usePlaybackClock";
 import { applyPreset, type PresetId } from "../motion/presets/motionPresets";
@@ -144,7 +145,7 @@ export function MotionEditor() {
   // always equals Math.round(trueAccum) — no compounding error, and the
   // reducer only ever sees whole milliseconds (visible_start_ms is `int` on
   // the backend, so a fractional delta would fail to save once accumulated).
-  const nudgeAccumRef = useRef({ layerId: null as string | null, trueAccum: 0, dispatchedSoFar: 0 });
+  const nudgeAccumRef = useRef<{ signature: string | null; trueAccum: number; dispatchedSoFar: number; baseValues: Record<string, { x: number }> }>({ signature: null, trueAccum: 0, dispatchedSoFar: 0, baseValues: {} });
   const activeSceneRef = useRef<MotionScene | null>(null);
   // LT-PANELS drag state. These live HERE, with the other refs, and not down
   // beside their handlers — there are `Loading…` / error early returns further
@@ -274,32 +275,55 @@ export function MotionEditor() {
         e.preventDefault();
         playbackRef.current.toggle();
       } else if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
-        // With a layer selected (and not playing), nudge the layer's whole
-        // span by one frame (Shift = 10 frames). Otherwise step the playhead.
-        const selectedId = selectionRef.current[0];
-        const start = selectedLayerStartRef.current;
-        if (selectedId && start !== null && !isPlayingRef.current) {
+        // With layer(s) selected (and not playing), nudge every selected
+        // layer's x position by FRAME_STEP_MS pixels (Shift = 10 frames)
+        // via MOVE_LAYERS_BATCH.  Otherwise step the playhead as before.
+        const selectedIds = selectionRef.current;
+        if (selectedIds.length > 0 && !isPlayingRef.current) {
           e.preventDefault();
           const step = e.shiftKey ? 10 * FRAME_STEP_MS : FRAME_STEP_MS;
           const rawStep = e.key === "ArrowLeft" ? -step : step;
 
+          const signature = selectedIds.slice().sort().join(",");
           const accum = nudgeAccumRef.current;
-          if (accum.layerId !== selectedId) {
-            // Different layer than the last nudge (or the first nudge ever)
-            // — start the true-offset accumulator fresh from here.
-            accum.layerId = selectedId;
+          if (accum.signature !== signature) {
+            accum.signature = signature;
             accum.trueAccum = 0;
             accum.dispatchedSoFar = 0;
+            accum.baseValues = {};
+            const scene = activeSceneRef.current;
+            if (scene) {
+              for (const id of selectedIds) {
+                const layer = scene.layers.find((l) => l.id === id);
+                // RESOLVED x at the playhead, not layer.transform.x. For a
+                // layer whose x is keyframed, the base transform is not what
+                // is on screen — keyframe evaluation ignores it entirely — so
+                // basing the nudge on it teleports the layer to base+delta.
+                // Measured before this fix: a layer sitting at x=500 via
+                // keyframes jumped to 33 on one ArrowRight press. Same root
+                // cause as the multi-drag and multi-resize bugs; this is the
+                // third time, hence the comment rather than a silent one-liner.
+                if (layer) {
+                  accum.baseValues[id] = {
+                    x: resolveTransformAtTime(layer, playbackRef.current.playheadMs).x,
+                  };
+                }
+              }
+            }
           }
+          if (Object.keys(accum.baseValues).length === 0) return;
+
           accum.trueAccum += rawStep;
           const roundedTotal = Math.round(accum.trueAccum);
-          const deltaMs = roundedTotal - accum.dispatchedSoFar;
-
-          if (start + deltaMs < 0) return;
+          const delta = roundedTotal - accum.dispatchedSoFar;
+          if (delta === 0) return;
           accum.dispatchedSoFar = roundedTotal;
 
-          const ripple = rippleModeRef.current;
-          dispatch({ type: ripple ? "RIPPLE_RETIME" : "RETIME_LAYER", layerId: selectedId, deltaMs });
+          const updates = selectedIds.map((id) => ({
+            layerId: id,
+            transform: { x: (accum.baseValues[id]?.x ?? 0) + roundedTotal },
+          }));
+          dispatch({ type: "MOVE_LAYERS_BATCH", updates, timeMs: playbackRef.current.playheadMs });
         } else {
           // Frame stepping. Shift jumps a second at a time for coarse seeking.
           e.preventDefault();
@@ -392,12 +416,12 @@ export function MotionEditor() {
     dispatch({ type: "APPLY_KEYFRAMES_BATCH", updates });
   }
 
-  function handleSceneTransition(sceneId: string, transitionId: string) {
+  function handleSceneTransition(sceneId: string, transitionId: string, durationMs: number) {
     const scene = state.project.scenes.find((s) => s.id === sceneId);
     if (!scene) return;
-    const updates = applyTransitionToScene(scene, transitionId, 600);
+    const updates = applyTransitionToScene(scene, transitionId, durationMs);
     if (updates.length === 0) return;
-    dispatch({ type: "SET_SCENE_TRANSITION", sceneId, transitionId, updates });
+    dispatch({ type: "SET_SCENE_TRANSITION", sceneId, transitionId, durationMs, updates });
   }
 
   function handleClearSceneTransition(sceneId: string) {
@@ -539,6 +563,19 @@ export function MotionEditor() {
   }
 
   function handleResizeLayers(moves: Array<{ layerId: string; patch: Partial<Transform> }>) {
+    if (moves.length === 0) return;
+    if (moves.length === 1) {
+      applyTransformEdit(moves[0].layerId, moves[0].patch);
+      return;
+    }
+    const updates = moves.map((m) => ({
+      layerId: m.layerId,
+      transform: m.patch,
+    }));
+    dispatch({ type: "MOVE_LAYERS_BATCH", updates, timeMs: state.playheadMs });
+  }
+
+  function handleRotateLayers(moves: Array<{ layerId: string; patch: Partial<Transform> }>) {
     if (moves.length === 0) return;
     if (moves.length === 1) {
       applyTransformEdit(moves[0].layerId, moves[0].patch);
@@ -895,6 +932,7 @@ export function MotionEditor() {
             onMoveLayers={handleMoveLayers}
             onResizeLayer={(layerId, patch) => applyTransformEdit(layerId, patch)}
             onResizeLayers={handleResizeLayers}
+            onRotateLayers={handleRotateLayers}
             getTransform={(layer) => getResolvedTransform(state, layer)}
             playheadMs={state.playheadMs}
             isPlaying={playback.isPlaying}

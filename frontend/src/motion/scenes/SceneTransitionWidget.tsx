@@ -55,40 +55,58 @@ const PREVIEW_STYLE: Record<string, React.CSSProperties> = {
   "dissolve": { animation: "t-preview-dissolve 1.2s ease-in-out infinite" },
 };
 
+const DURATION_MIN = 200;
+const DURATION_MAX = 2000;
+const DURATION_STEP = 50;
+const DEFAULT_DURATION = 600;
+
 export interface SceneTransitionWidgetProps {
   sceneId: string;
   transitionId: string | null | undefined;
-  onApplyTransition: (sceneId: string, transitionId: string) => void;
+  transitionDurationMs: number | null | undefined;
+  onApplyTransition: (sceneId: string, transitionId: string, durationMs: number) => void;
   onClearTransition: (sceneId: string) => void;
 }
 
 export function SceneTransitionWidget({
   sceneId,
   transitionId,
+  transitionDurationMs,
   onApplyTransition,
   onClearTransition,
 }: SceneTransitionWidgetProps) {
   const [open, setOpen] = useState(false);
   const [popoverPos, setPopoverPos] = useState<{ top: number; left: number; width: number } | null>(null);
+  const [pendingTransition, setPendingTransition] = useState<string | null>(null);
+  const [pendingDuration, setPendingDuration] = useState(DEFAULT_DURATION);
   const triggerRef = useRef<HTMLDivElement>(null);
 
   const activeDef = TRANSITION_DEFINITIONS.find((d) => d.id === transitionId);
   const hasTransition = !!activeDef;
+  const activeDuration = transitionDurationMs ?? DEFAULT_DURATION;
 
   const handleSelect = useCallback(
     (id: string) => {
-      onApplyTransition(sceneId, id);
-      setOpen(false);
+      setPendingTransition(id);
+      setPendingDuration(activeDuration);
     },
-    [sceneId, onApplyTransition],
+    [activeDuration],
   );
+
+  const handleApply = useCallback(() => {
+    if (!pendingTransition) return;
+    onApplyTransition(sceneId, pendingTransition, pendingDuration);
+    setOpen(false);
+    setPendingTransition(null);
+  }, [sceneId, pendingTransition, pendingDuration, onApplyTransition]);
 
   const handleToggle = useCallback(() => {
     if (open) {
       setOpen(false);
+      setPendingTransition(null);
     } else if (triggerRef.current) {
       const rect = triggerRef.current.getBoundingClientRect();
-      setPopoverPos({ top: rect.bottom + 4, left: rect.left, width: Math.max(rect.width, 260) });
+      setPopoverPos({ top: rect.bottom + 4, left: rect.left, width: Math.max(rect.width, 280) });
       setOpen(true);
     }
   }, [open]);
@@ -98,6 +116,7 @@ export function SceneTransitionWidget({
     function handleClick(e: MouseEvent) {
       if (!triggerRef.current?.contains(e.target as Node)) {
         setOpen(false);
+        setPendingTransition(null);
       }
     }
     document.addEventListener("mousedown", handleClick);
@@ -120,7 +139,7 @@ export function SceneTransitionWidget({
           />
         </div>
         <span className="truncate flex-1">
-          {hasTransition ? activeDef!.label : "No transition"}
+          {hasTransition ? `${activeDef!.label} (${activeDuration}ms)` : "No transition"}
         </span>
         {hasTransition && (
           <span className="text-[10px] text-text-faint">{activeDef!.previewGlyph}</span>
@@ -146,12 +165,12 @@ export function SceneTransitionWidget({
 
       {open && popoverPos && (
         <div
-          className="fixed z-50 bg-surface border border-border rounded-lg shadow-xl p-2"
+          className="fixed z-50 bg-surface border border-border rounded-lg shadow-xl p-3"
           style={{ top: popoverPos.top, left: popoverPos.left, minWidth: popoverPos.width }}
         >
-          <div className="grid grid-cols-3 gap-1.5">
+          <div className="grid grid-cols-3 gap-1.5 mb-3">
             {TRANSITION_DEFINITIONS.map((def) => {
-              const selected = def.id === transitionId;
+              const selected = (pendingTransition ?? transitionId) === def.id;
               return (
                 <button
                   key={def.id}
@@ -176,6 +195,37 @@ export function SceneTransitionWidget({
               );
             })}
           </div>
+
+          {(pendingTransition ?? transitionId) && (
+            <div className="border-t border-border/50 pt-2 space-y-1.5">
+              <div className="flex items-center justify-between">
+                <label className="text-[10px] text-text-faint font-medium uppercase tracking-wide">
+                  Duration
+                </label>
+                <span className="text-[11px] text-text-muted font-mono">{pendingDuration}ms</span>
+              </div>
+              <input
+                type="range"
+                min={DURATION_MIN}
+                max={DURATION_MAX}
+                step={DURATION_STEP}
+                value={pendingDuration}
+                onChange={(e) => setPendingDuration(Number(e.target.value))}
+                className="w-full h-1.5 rounded-full appearance-none bg-background accent-accent cursor-pointer"
+              />
+              <div className="flex justify-between text-[9px] text-text-faint">
+                <span>{DURATION_MIN}ms</span>
+                <span>{DURATION_MAX}ms</span>
+              </div>
+              <button
+                type="button"
+                onClick={handleApply}
+                className="w-full mt-1.5 px-3 py-1.5 bg-accent text-white text-xs font-medium rounded hover:opacity-90 transition-opacity"
+              >
+                Apply
+              </button>
+            </div>
+          )}
         </div>
       )}
     </div>

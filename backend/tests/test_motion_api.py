@@ -54,6 +54,64 @@ def test_list_projects_returns_summaries(client):
     assert all("scene_count" in p for p in listing)
 
 
+def test_list_projects_includes_first_scene_for_thumbnails(client):
+    """LT-PROJECTTHUMBNAILS: the project list carries enough of the first
+    scene to render a live SceneThumbnail, without the caller needing a
+    second request per project (that N+1 is exactly what this list
+    endpoint exists to avoid)."""
+    created = client.post("/motion/projects", json={"name": "Has a scene"}).json()
+    created["scenes"][0]["background_color"] = "#ABCDEF"
+    created["scenes"][0]["layers"] = [{
+        "id": "l1", "name": "Bg", "type": "rect", "locked": False, "hidden": False,
+        "transform": {"x": 0, "y": 0, "width": 100, "height": 100, "rotation": 0, "opacity": 1, "blur": 0},
+        "rect": {"fill": "#112233", "corner_radius": 0, "stroke_color": "#000000", "stroke_width": 0},
+        "ellipse": None, "text": None, "image": None, "video": None, "keyframes": [],
+    }]
+    client.put(f"/motion/projects/{created['id']}", json=created)
+
+    listing = client.get("/motion/projects").json()
+    entry = next(p for p in listing if p["id"] == created["id"])
+    assert entry["first_scene"] is not None
+    assert entry["first_scene"]["background_color"] == "#ABCDEF"
+    assert len(entry["first_scene"]["layers"]) == 1
+    assert entry["first_scene"]["layers"][0]["rect"]["fill"] == "#112233"
+    # Thumbnails never play audio -- no reason to ship it to a list page.
+    assert entry["first_scene"]["audio_tracks"] == []
+
+
+def test_list_projects_first_scene_is_none_without_scenes(client):
+    """A project with zero scenes must fall back gracefully (None), not
+    crash the whole listing for every other project."""
+    created = client.post("/motion/projects", json={"name": "Empty"}).json()
+    created["scenes"] = []
+    client.put(f"/motion/projects/{created['id']}", json=created)
+
+    listing = client.get("/motion/projects").json()
+    entry = next(p for p in listing if p["id"] == created["id"])
+    assert entry["first_scene"] is None
+
+
+def test_list_projects_survives_a_corrupt_first_scene(client):
+    """A hand-edited or corrupted project file's first scene failing
+    validation must degrade to first_scene=None for THAT project, not take
+    down the whole list endpoint (same fault isolation the pre-existing
+    OSError/JSONDecodeError guard gives a totally unreadable file)."""
+    from app.core.config import Paths
+
+    created = client.post("/motion/projects", json={"name": "Corrupt"}).json()
+    path = Paths.motion_projects / f"{created['id']}.json"
+    import json as _json
+    data = _json.loads(path.read_text(encoding="utf-8"))
+    data["scenes"][0]["width"] = "not-a-number"  # fails MotionScene validation
+    path.write_text(_json.dumps(data), encoding="utf-8")
+
+    listing = client.get("/motion/projects").json()
+    entry = next(p for p in listing if p["id"] == created["id"])
+    assert entry["first_scene"] is None
+    # Every OTHER project must still show up normally.
+    assert len(listing) >= 1
+
+
 def test_put_saves_scene_edits(client):
     created = client.post("/motion/projects", json={"name": "Edit me"}).json()
     created["scenes"][0]["background_color"] = "#123456"

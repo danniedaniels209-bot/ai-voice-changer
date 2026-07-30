@@ -9,6 +9,7 @@ import { resolveConnectorEndpoints } from "../connectorGeometry";
 import { Connector } from "../connector/Connector";
 import type { ConnectorSpec } from "../connector/ConnectorTypes";
 import { colorGradeFilterId, isIdentityColorGrade, renderColorGradeFilter } from "../colorgrade/colorGrade";
+import { blendStyle } from "../blend/blendMode";
 
 export interface SceneThumbnailProps {
   scene: MotionScene;
@@ -295,7 +296,7 @@ function renderLayer(layer: MotionLayer, sceneDurationMs: number, layers: Motion
     }
 
   return (
-    <g key={layer.id} transform={groupTransform} opacity={t.opacity}>
+    <g key={layer.id} transform={groupTransform} opacity={t.opacity} style={blendStyle(layer.blend_mode)}>
       {filteredShape}
     </g>
   );

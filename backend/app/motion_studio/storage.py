@@ -14,6 +14,8 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from pydantic import ValidationError
+
 from app.core.config import Paths
 from app.core.errors import MotionProjectNotFoundError
 from app.motion_studio.models import MotionProject, MotionScene
@@ -82,9 +84,45 @@ def delete_project(project_id: str) -> None:
     path.unlink()
 
 
+def _first_scene_for_thumbnail(data: dict) -> dict | None:
+    """The project's first scene, validated + defaulted via MotionScene, for
+    the project list's thumbnail preview (LT-PROJECTTHUMBNAILS).
+
+    list_projects() already parses the FULL raw JSON of every project file
+    below (json.loads on the whole thing) — the "lightweight" it avoids is
+    validating every layer of EVERY scene through MotionProject's full
+    model, not the file read itself. So pulling one scene's dict out of
+    that already-parsed data and validating just THAT one scene is real
+    work but bounded per project (one scene, not all of them), not an added
+    file read — no N+1 introduced here.
+
+    Returns None (never raises) for a project with zero scenes or a first
+    scene that fails to validate, so one corrupt project degrades to "no
+    thumbnail" for itself rather than breaking the whole list — same
+    per-project fault isolation the JSONDecodeError guard below already
+    gives the rest of this function.
+    """
+    scenes = data.get("scenes") or []
+    if not scenes:
+        return None
+    try:
+        scene = MotionScene.model_validate(scenes[0])
+    except ValidationError:
+        return None
+    dump = scene.model_dump()
+    # Thumbnails only ever draw layers/connectors — audio never renders.
+    # Zeroed rather than omitted so the shape still matches MotionScene
+    # (the frontend type isn't Partial<MotionScene>), just with nothing to
+    # ship: no reason to send voiceover URLs/keyframes to a list page.
+    dump["audio_tracks"] = []
+    return dump
+
+
 def list_projects() -> list[dict]:
-    """Lightweight summaries (id/name/updated_at) for a project picker —
-    avoids parsing every layer of every scene just to show a list."""
+    """Lightweight summaries (id/name/updated_at/first_scene) for a project
+    picker — avoids VALIDATING every layer of every scene (the expensive
+    part) just to show a list. See _first_scene_for_thumbnail for why
+    including one scene doesn't reintroduce that cost."""
     summaries = []
     for path in sorted(Paths.motion_projects.glob("*.json")):
         try:
@@ -96,6 +134,7 @@ def list_projects() -> list[dict]:
             "name": data.get("name", "Untitled Project"),
             "updated_at": data.get("updated_at", ""),
             "scene_count": len(data.get("scenes", [])),
+            "first_scene": _first_scene_for_thumbnail(data),
         })
     summaries.sort(key=lambda s: s["updated_at"], reverse=True)
     return summaries

@@ -12,6 +12,7 @@ import { VideoCropControls } from "./video/VideoCropControls";
 import { VideoSpeedControls } from "./video/VideoSpeedControls";
 import { CaptionGroupPanel } from "./subtitles/CaptionGroupPanel";
 import { ColorGradePicker } from "./colorgrade/ColorGradePicker";
+import { BlendModePicker } from "./blend/BlendModePicker";
 
 /** Default starting points for "Add gradient"/"Add shadow" — matches what
  *  GradientPicker / ShadowPicker already consider reasonable, so the user
@@ -704,6 +705,13 @@ export function Inspector({
           layer type — it's a MotionLayer field, not a per-shape prop — so
           it's unconditional here, unlike the video-only blocks above. */}
       <ColorGradePicker layer={layer} onUpdateLayer={onUpdateLayer} />
+
+      {/* LT-LAYERBLEND: CSS mix-blend-mode selector. Same shape as
+          ColorGradePicker — applies to any layer type via a MotionLayer
+          field, so unconditional here. The actual CSS application lives
+          in motion/blend/blendMode.ts so all three renderers share one
+          definition rather than re-emitting the style three times. */}
+      <BlendModePicker layer={layer} onUpdateLayer={onUpdateLayer} />
 
       {/* LT-CAPTIONSTYLE (subtitles/CaptionGroupPanel): batch restyle +
           group-move for layers from a subtitle import. Kept in its own

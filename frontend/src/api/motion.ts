@@ -1,11 +1,16 @@
 import { API_BASE_URL, apiGet, apiPost, apiPut, apiDelete, apiUpload } from "./client";
-import type { MotionProject } from "../types/motion";
+import type { MotionProject, MotionScene } from "../types/motion";
 
 export interface MotionProjectSummary {
   id: string;
   name: string;
   updated_at: string;
   scene_count: number;
+  /** LT-PROJECTTHUMBNAILS: the project's first scene, for a live SceneThumbnail
+   *  preview on the project list. Null for a project with zero scenes, or
+   *  whose first scene failed to validate server-side (storage.py degrades
+   *  gracefully per-project rather than breaking the whole list). */
+  first_scene: MotionScene | null;
 }
 
 export function listMotionProjects(): Promise<MotionProjectSummary[]> {

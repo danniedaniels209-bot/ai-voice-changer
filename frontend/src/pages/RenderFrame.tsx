@@ -14,6 +14,7 @@ import type {
 import { cropInset, isLayerVisibleAt, videoSourceTimeMs } from "../types/motion";
 import { ease } from "../motion/easing";
 import { colorGradeFilterId, isIdentityColorGrade, renderColorGradeFilter } from "../motion/colorgrade/colorGrade";
+import { blendStyle } from "../motion/blend/blendMode";
 import type { GradientFill } from "../motion/gradients/gradientTypes";
 import type { ShadowEffect } from "../motion/shadowfx/shadowTypes";
 import { lineHeight, wrapTextToLines } from "../motion/textWrap";
@@ -378,7 +379,7 @@ function renderLayer(layer: MotionLayer, timeMs: number, sceneDurationMs: number
     }
 
   return (
-    <g key={layer.id} transform={groupTransform} opacity={t.opacity}>
+    <g key={layer.id} transform={groupTransform} opacity={t.opacity} style={blendStyle(layer.blend_mode)}>
       {filteredShape}
     </g>
   );
