@@ -456,51 +456,51 @@ export function RenderFrame() {
           ) / 1000;
 
         // Already at the target time — no seek needed.
-        if (Math.abs(video.currentTime - targetTimeMs) <= 0.01) {
-          resolve();
-          return;
-        }
+      if (Math.abs(video.currentTime - targetTime_s) <= 0.01) {
+        resolve();
+        return;
+      }
 
-        let resolved = false;
-        let pollHandle: ReturnType<typeof setInterval> | null = null;
+      let resolved = false;
+      let pollHandle: ReturnType<typeof setInterval> | null = null;
 
-        const onSeeked = () => {
-          if (resolved) return;
-          resolved = true;
-          video.removeEventListener("seeked", onSeeked);
-          if (pollHandle !== null) clearInterval(pollHandle);
-          resolve();
-        };
+      const onSeeked = () => {
+        if (resolved) return;
+        resolved = true;
+        video.removeEventListener("seeked", onSeeked);
+        if (pollHandle !== null) clearInterval(pollHandle);
+        resolve();
+      };
 
-        video.addEventListener("seeked", onSeeked);
+      video.addEventListener("seeked", onSeeked);
 
-        // Safety timeout: if neither poll nor seeked ever resolves, abort
-        // at 2s so the export doesn't hang on a single degenerate frame.
-        const timeout = setTimeout(() => {
-          if (resolved) return;
-          resolved = true;
-          console.warn("Video seek timed out for", video.currentSrc);
-          video.removeEventListener("seeked", onSeeked);
-          if (pollHandle !== null) clearInterval(pollHandle);
-          resolve();
-        }, 2000);
+      // Safety timeout: if neither poll nor seeked ever resolves, abort
+      // at 2s so the export doesn't hang on a single degenerate frame.
+      const timeout = setTimeout(() => {
+        if (resolved) return;
+        resolved = true;
+        console.warn("Video seek timed out for", video.currentSrc);
+        video.removeEventListener("seeked", onSeeked);
+        if (pollHandle !== null) clearInterval(pollHandle);
+        resolve();
+      }, 2000);
 
-        pollHandle = setInterval(() => {
-          if (resolved) return;
-          // Seeking may have resolved already (ran above), but it's still
-          // processing — readyState < 2 means the browser hasn't decoded
-          // enough data to render at all.
-          if (!video.seeking && video.readyState >= 2) {
-            // Verify the seek actually landed at the requested time.
-            // A deviation > 0.1s means the browser possibly went stale.
-            if (Math.abs(video.currentTime - targetTimeMs) <= 0.1) {
-              clearTimeout(timeout);
-              onSeeked();
-            }
+      pollHandle = setInterval(() => {
+        if (resolved) return;
+        // Seeking may have resolved already (ran above), but it's still
+        // processing — readyState < 2 means the browser hasn't decoded
+        // enough data to render at all.
+        if (!video.seeking && video.readyState >= 2) {
+          // Verify the seek actually landed at the requested time.
+          // A deviation > 0.1s means the browser possibly went stale.
+          if (Math.abs(video.currentTime - targetTime_s) <= 0.1) {
+            clearTimeout(timeout);
+            onSeeked();
           }
-        }, 10);
+        }
+      }, 10);
 
-        video.currentTime = targetTimeMs;
+      video.currentTime = targetTime_s;
       });
     });
 
