@@ -76,6 +76,27 @@ export function Layout() {
     });
   }
 
+  // Ctrl/Cmd+B — the same shortcut VS Code and most editors use for this, so
+  // it's already in muscle memory. Skipped while typing, or a rename field
+  // would swallow the keystroke and hide the sidebar instead of typing "b".
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== "b") return;
+      const el = document.activeElement as HTMLElement | null;
+      const typing =
+        !!el &&
+        (el.tagName === "INPUT" ||
+          el.tagName === "TEXTAREA" ||
+          el.tagName === "SELECT" ||
+          el.isContentEditable);
+      if (typing) return;
+      e.preventDefault();
+      toggleSidebar();
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+
   const gpu = health?.hardware;
   const title =
     PAGE_TITLES[location.pathname] ??
@@ -92,9 +113,15 @@ export function Layout() {
     <div className="h-screen flex flex-col bg-bg text-text overflow-hidden">
       <div className="flex-1 flex min-h-0">
         {/* ── Sidebar ── */}
+        {/* Collapsed means fully hidden (w-0), not a narrow icon rail — the
+            point is to give the page the whole width back, and an 84px rail
+            still costs ~7% of a laptop screen. Safe to hide completely
+            because the header toggle below is always visible, so there is
+            never a state with no way back. overflow-hidden keeps the nav
+            content from spilling out during the width transition. */}
         <aside
-          className={`shrink-0 flex flex-col border-r border-border bg-surface transition-[width] duration-200 ${
-            collapsed ? "w-[84px]" : "w-[300px]"
+          className={`shrink-0 flex flex-col bg-surface overflow-hidden transition-[width] duration-200 ${
+            collapsed ? "w-0 border-r-0" : "w-[300px] border-r border-border"
           }`}
         >
           <NavLink
@@ -102,21 +129,17 @@ export function Layout() {
             className="flex items-center gap-2.5 px-5 h-[72px] shrink-0 border-b border-border hover:bg-surface-hover transition-colors"
           >
             <Diamond size={18} className="text-accent shrink-0" strokeWidth={2.2} />
-            {!collapsed && (
-              <span className="font-semibold tracking-tight text-[15px] whitespace-nowrap">
-                Voice Studio
-              </span>
-            )}
+            <span className="font-semibold tracking-tight text-[15px] whitespace-nowrap">
+              Voice Studio
+            </span>
           </NavLink>
 
           <nav className="flex-1 overflow-y-auto py-3 px-2 space-y-4">
             {NAV_GROUPS.map((group) => (
               <div key={group.label}>
-                {!collapsed && (
-                  <div className="px-2.5 pb-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-text-faint">
-                    {group.label}
-                  </div>
-                )}
+                <div className="px-2.5 pb-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-text-faint">
+                  {group.label}
+                </div>
                 <div className="space-y-0.5">
                   {group.items.map((item) => {
                     const Icon = item.icon;
@@ -125,13 +148,12 @@ export function Layout() {
                         key={item.to}
                         to={item.to}
                         end={item.end}
-                        title={collapsed ? item.label : undefined}
                         className={({ isActive }) =>
                           `relative flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm font-medium transition-colors ${
                             isActive
                               ? "bg-accent-dim text-text"
                               : "text-text-muted hover:text-text hover:bg-surface-hover"
-                          } ${collapsed ? "justify-center px-0" : ""}`
+                          }`
                         }
                       >
                         {({ isActive }) => (
@@ -144,9 +166,7 @@ export function Layout() {
                               strokeWidth={2}
                               className={isActive ? "text-accent shrink-0" : "shrink-0"}
                             />
-                            {!collapsed && (
-                              <span className="whitespace-nowrap">{item.label}</span>
-                            )}
+                            <span className="whitespace-nowrap">{item.label}</span>
                           </>
                         )}
                       </NavLink>
@@ -162,32 +182,29 @@ export function Layout() {
               <div
                 title={gpu.device_name ?? "CPU"}
                 className={`flex items-center gap-2 rounded-md px-2.5 py-1.5 text-xs font-medium ${
-                  collapsed ? "justify-center px-0" : ""
-                } ${gpu.cuda_available ? "text-success" : "text-text-muted"}`}
+                  gpu.cuda_available ? "text-success" : "text-text-muted"
+                }`}
               >
                 {gpu.cuda_available ? (
                   <Zap size={14} className="shrink-0" />
                 ) : (
                   <Cpu size={14} className="shrink-0" />
                 )}
-                {!collapsed && (
-                  <span className="truncate">
-                    {gpu.cuda_available
-                      ? (gpu.device_name ?? "GPU").replace("NVIDIA ", "")
-                      : "CPU only"}
-                  </span>
-                )}
+                <span className="truncate">
+                  {gpu.cuda_available
+                    ? (gpu.device_name ?? "GPU").replace("NVIDIA ", "")
+                    : "CPU only"}
+                </span>
               </div>
             )}
             <button
               type="button"
               onClick={toggleSidebar}
-              className={`w-full flex items-center gap-2 rounded-md px-2.5 py-1.5 text-xs text-text-muted hover:text-text hover:bg-surface-hover transition-colors ${
-                collapsed ? "justify-center px-0" : ""
-              }`}
+              className="w-full flex items-center gap-2 rounded-md px-2.5 py-1.5 text-xs text-text-muted hover:text-text hover:bg-surface-hover transition-colors"
             >
-              {collapsed ? <PanelLeftOpen size={15} /> : <PanelLeftClose size={15} />}
-              {!collapsed && <span>Collapse</span>}
+              <PanelLeftClose size={15} />
+              <span>Collapse sidebar</span>
+              <span className="ml-auto text-text-faint">Ctrl+B</span>
             </button>
           </div>
         </aside>
@@ -195,6 +212,20 @@ export function Layout() {
         {/* ── Main column ── */}
         <div className="flex-1 flex flex-col min-w-0">
           <header className="h-[72px] shrink-0 border-b border-border flex items-center px-8 gap-3">
+            {/* The ONLY control that's visible in both states, which is why
+                the sidebar can safely collapse to zero width. The old toggle
+                lived at the bottom of the sidebar itself — invisible once
+                collapsed, and easy to miss even when open. */}
+            <button
+              type="button"
+              onClick={toggleSidebar}
+              title={`${collapsed ? "Show" : "Hide"} sidebar  (Ctrl+B)`}
+              aria-label={`${collapsed ? "Show" : "Hide"} sidebar`}
+              aria-expanded={!collapsed}
+              className="-ml-2 shrink-0 p-2 rounded-md text-text-muted hover:text-text hover:bg-surface-hover transition-colors"
+            >
+              {collapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
+            </button>
             <h1 className="text-lg font-semibold tracking-tight text-text truncate">
               {title}
             </h1>
