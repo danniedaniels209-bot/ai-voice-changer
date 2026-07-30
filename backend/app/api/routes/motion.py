@@ -12,14 +12,14 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, File, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from app.core.config import Paths
 from app.core.errors import AppError, JobNotFoundError
 from app.core.logging import get_logger
-from app.motion_studio import export_service, storage
+from app.motion_studio import archive_service, export_service, storage
 from app.motion_studio.models import MotionProject
 
 logger = get_logger(__name__)
@@ -55,6 +55,30 @@ def put_project(project_id: str, project: MotionProject) -> MotionProject:
 def delete_project(project_id: str) -> dict:
     storage.delete_project(project_id)
     return {"deleted": True}
+
+
+# --- Project archives (LT-PROJECTIO) — export/import a project as one file ---
+
+
+@router.get("/projects/{project_id}/archive", response_model=None)
+def export_project_archive(project_id: str) -> FileResponse:
+    """A project plus every asset it references, as a single .motionzip.
+    What makes a project shareable or backupable at all — see
+    archive_service.py for the format."""
+    zip_path = archive_service.build_archive(project_id)
+    return FileResponse(
+        str(zip_path),
+        media_type="application/zip",
+        filename=zip_path.name,
+    )
+
+
+@router.post("/projects/import")
+async def import_project_archive(file: UploadFile = File(...)) -> MotionProject:
+    """The inverse of the archive route: takes a .motionzip and creates a
+    NEW project from it with fresh project/asset ids, so it can never
+    collide with (or silently point at) anything already on this machine."""
+    return await archive_service.import_archive(file)
 
 
 # --- Motion Project Export Pipeline ---
