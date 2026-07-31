@@ -13,6 +13,7 @@ import type { MotionScene, AudioTrack, SceneMarker, Keyframe } from "../types/mo
 import { Waveform } from "./audio/WaveformCanvas";
 import { findSnap } from "./timeline/snapping";
 import { scrubAudioAt } from "./audio/scrubAudio";
+import { DRAG_MIME as ASSET_DRAG_MIME } from "./assets/AssetDock";
 import { GraphEditor } from "./charts/GraphEditor";
 
 interface TimelineProps {
@@ -42,6 +43,10 @@ interface TimelineProps {
   onRetimeLayer?: (layerId: string, deltaMs: number) => void;
   onTrimLayer?: (layerId: string, startMs: number | null, endMs: number | null) => void;
   onAddSceneMarker?: (timeMs: number) => void;
+  /** Drop an imported asset onto the timeline at `timeMs`. The dock hands
+   *  over the raw JSON payload; the editor decides what layer/track it
+   *  becomes, since only it knows about the reducer. */
+  onDropAsset?: (payloadJson: string, timeMs: number) => void;
   onUpdateSceneMarker?: (markerId: string, patch: Partial<SceneMarker>) => void;
   onDeleteSceneMarker?: (markerId: string) => void;
 }
@@ -86,6 +91,7 @@ export function Timeline({
   onToggleRipple,
   onSelectKeyframe,
   onAddSceneMarker,
+  onDropAsset,
   onUpdateSceneMarker,
   onDeleteSceneMarker,
   onCollapse,
@@ -99,6 +105,8 @@ export function Timeline({
   const barDrag = useRef<BarDrag | null>(null);
   const [barPreview, setBarPreview] = useState<{ start: number; end: number } | null>(null);
   const [snapLineMs, setSnapLineMs] = useState<number | null>(null);
+  /** Preview position while an asset is dragged over the timeline. */
+  const [dropTargetMs, setDropTargetMs] = useState<number | null>(null);
   const [graphMode, setGraphMode] = useState(false);
 
   function msToPx(ms: number): number {
@@ -351,8 +359,43 @@ export function Timeline({
         </button>
       </div>
 
-      <div className="flex-1 overflow-auto" onMouseMove={handleMouseMove} onMouseUp={handleMouseUp} onMouseLeave={handleMouseUp}>
-        <div style={{ width }}>
+      <div
+        className={`flex-1 overflow-auto ${dropTargetMs !== null ? "bg-accent-dim/10" : ""}`}
+        onMouseMove={handleMouseMove}
+        onMouseUp={handleMouseUp}
+        onMouseLeave={handleMouseUp}
+        // Asset drop (LT-MEDIADOCK). Only reacts to the dock's private MIME
+        // type, so dragging a layer bar around the timeline — or a file from
+        // the desktop — doesn't get mistaken for an asset drop.
+        onDragOver={(e) => {
+          if (!onDropAsset || !e.dataTransfer.types.includes(ASSET_DRAG_MIME)) return;
+          e.preventDefault();
+          e.dataTransfer.dropEffect = "copy";
+          const rect = trackRef.current?.getBoundingClientRect();
+          if (rect) setDropTargetMs(Math.max(0, pxToMs(e.clientX - rect.left)));
+        }}
+        onDragLeave={() => setDropTargetMs(null)}
+        onDrop={(e) => {
+          if (!onDropAsset || !e.dataTransfer.types.includes(ASSET_DRAG_MIME)) return;
+          e.preventDefault();
+          const rect = trackRef.current?.getBoundingClientRect();
+          const ms = rect ? Math.max(0, pxToMs(e.clientX - rect.left)) : 0;
+          setDropTargetMs(null);
+          onDropAsset(e.dataTransfer.getData(ASSET_DRAG_MIME), ms);
+        }}
+      >
+        <div style={{ width, position: "relative" }}>
+          {/* Where the clip will land. Dropping media with no indicator means
+              guessing, then undoing — the whole point of dropping at a
+              position is seeing the position first. */}
+          {dropTargetMs !== null && (
+            <div
+              className="absolute top-0 bottom-0 w-0.5 bg-accent pointer-events-none z-30"
+              style={{ left: msToPx(dropTargetMs) }}
+            >
+              <div className="absolute -top-0.5 -left-1 w-2.5 h-2.5 rounded-full bg-accent" />
+            </div>
+          )}
           {/* Ruler */}
           <div
             ref={trackRef}

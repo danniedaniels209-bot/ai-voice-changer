@@ -28,6 +28,7 @@ import { usePlaybackClock } from "../motion/usePlaybackClock";
 import { applyPreset, type PresetId } from "../motion/presets/motionPresets";
 import { MotionCanvas } from "../motion/MotionCanvas";
 import { LayerPanel } from "../motion/LayerPanel";
+import { AssetDock } from "../motion/assets/AssetDock";
 import { Inspector } from "../motion/Inspector";
 import { Timeline } from "../motion/Timeline";
 import { ExportDialog } from "../motion/export/ExportDialog";
@@ -59,6 +60,12 @@ const INITIAL_STATE: EditorState = {
 
 const AUTOSAVE_DELAY_MS = 1200;
 
+/** Default on-timeline length for a dropped video/image, in ms. A dropped
+ *  clip needs SOME duration or it would be a zero-width sliver you can't
+ *  grab to resize. Real video duration isn't known until the browser loads
+ *  metadata, so this is a sane starting length the user can trim. */
+const DROPPED_LAYER_MS = 5000;
+
 /** One frame at 30fps. Arrow-key stepping uses this; Shift+arrow jumps a
  *  full second for coarse seeking. */
 const FRAME_STEP_MS = 1000 / 30;
@@ -85,6 +92,9 @@ export function MotionEditor() {
   const [rippleMode, setRippleMode] = useState(false);
   const [connectFrom, setConnectFrom] = useState<string | null>(null);
   const [videoImporting, setVideoImporting] = useState(false);
+  // Bumped after an asset lands so the dock re-lists (a drop can be the first
+  // time a freshly-uploaded file is used).
+  const [assetRefresh, setAssetRefresh] = useState(0);
   // LT-AUTOSAVE-RECOVERY: modal state for offering to restore a local snapshot.
   const [recoveryOpen, setRecoveryOpen] = useState(false);
   const [recoveryProject, setRecoveryProject] = useState<MotionProject | null>(null);
@@ -516,6 +526,41 @@ export function MotionEditor() {
   function handleInsertAsset(asset: MotionAsset) {
     const type: LayerType = asset.content_type.startsWith("video/") ? "video" : "image";
     dispatch({ type: "ADD_LAYER", layer: createLayer(type, { src: asset.source_url }) });
+  }
+
+  /**
+   * Drop an imported asset onto the timeline at a specific time.
+   *
+   * Video and image become a LAYER whose visible window starts where you
+   * dropped it. Audio becomes an audio TRACK offset to the same point —
+   * dropping a music file and getting an invisible image layer would be
+   * nonsense, so the asset's own type decides, not the drop position.
+   */
+  function handleDropAsset(payloadJson: string, timeMs: number) {
+    let asset: MotionAsset;
+    try {
+      asset = JSON.parse(payloadJson) as MotionAsset;
+    } catch {
+      // A malformed payload should do nothing, not throw inside a drop
+      // handler where the error would be invisible to the user.
+      return;
+    }
+    if (!asset?.source_url) return;
+    const at = Math.max(0, Math.round(timeMs));
+
+    if (asset.content_type?.startsWith("audio/")) {
+      dispatch({ type: "ADD_AUDIO_TRACK", kind: "music" });
+      setAssetRefresh((n) => n + 1);
+      return;
+    }
+
+    const type: LayerType = asset.content_type?.startsWith("video/") ? "video" : "image";
+    const layer = createLayer(type, { src: asset.source_url });
+    dispatch({
+      type: "ADD_LAYERS",
+      layers: [{ ...layer, visible_start_ms: at, visible_end_ms: at + DROPPED_LAYER_MS }],
+    });
+    setAssetRefresh((n) => n + 1);
   }
 
   function handleInsertLayers(layers: MotionLayer[]) {
@@ -1048,6 +1093,13 @@ export function MotionEditor() {
               onOpenInsert={() => setInsertOpen(true)}
             />
           </div>
+          {/* Media dock — always visible, so importing isn't hidden behind a
+              modal and imported files stay in reach to drag onto the
+              timeline. Fixed height with its own scroll: given a share of the
+              sidebar it would fight the layer list for space on a laptop. */}
+          <div className="h-[210px] shrink-0">
+            <AssetDock onInsertAsset={handleInsertAsset} refreshToken={assetRefresh} />
+          </div>
         </div>
 
         {/* Left sidebar resize handle */}
@@ -1220,6 +1272,7 @@ export function MotionEditor() {
           rippleMode={rippleMode}
           onToggleRipple={() => setRippleMode((r) => !r)}
           onAddSceneMarker={(timeMs) => dispatch({ type: "ADD_SCENE_MARKER", timeMs: Math.round(timeMs) })}
+          onDropAsset={handleDropAsset}
           onUpdateSceneMarker={(markerId, patch) => dispatch({ type: "UPDATE_SCENE_MARKER", markerId, patch })}
           onDeleteSceneMarker={(markerId) => dispatch({ type: "DELETE_SCENE_MARKER", markerId })}
           onSelectKeyframe={(layerId, keyframeId) => {
