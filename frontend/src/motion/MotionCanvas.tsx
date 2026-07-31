@@ -1279,8 +1279,15 @@ export function MotionCanvas({
         )}
       </g>
     </svg>
+    {/* z-10, NOT z-50, on the overlay below. This is in-canvas content and
+        only needs to sit above the SVG — at z-50 it tied with every modal in
+        the app (Insert, Export, Transitions, Command Palette, Shortcuts,
+        recovery) and won on DOM order, so clicking "Add First Layer" opened
+        the Insert modal and then drew this card on top of it. Raising the one
+        modal would have left the other six broken; lowering this fixes the
+        whole class. Modals stay at z-50 and now reliably win. */}
     {scene.layers.length === 0 && onOpenInsert && (
-      <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none z-50">
+      <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none z-10">
         <div className="bg-surface/90 backdrop-blur border border-border rounded-xl shadow-2xl p-8 flex flex-col items-center text-center pointer-events-auto max-w-sm">
           <div className="w-12 h-12 rounded-full bg-accent/10 flex items-center justify-center mb-4 text-accent">
             <Square size={24} />
